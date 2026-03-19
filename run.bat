@@ -2,32 +2,34 @@
 chcp 65001 > nul
 setlocal
 
-echo 天堂图片管理器 - PyQt版本
+echo.
+echo TianTang Image Manager - PyQt Version
 echo ==============================
+echo.
 
-REM 检查Python是否安装
+rem Check if Python is installed
 python --version > nul 2>&1
 if errorlevel 1 (
-    echo 错误: 未找到Python，请先安装Python
+    echo Error: Python not found, please install Python first
     pause
     exit /b 1
 )
 
-REM 检查依赖
-echo 检查依赖...
-python -c "import sys; import PyQt5; import PIL; import requests; import urllib3; print('依赖检查通过')" > nul 2>&1
+rem Check dependencies
+echo Checking dependencies...
+python -c "import sys; import PyQt5; import PIL; import requests; import urllib3; print('Dependencies check passed')" > nul 2>&1
 if errorlevel 1 (
-    echo 未找到必要依赖，正在安装...
+    echo Dependencies not found, installing...
     python install_deps.py
     if errorlevel 1 (
-        echo 依赖安装失败
+        echo Dependency installation failed
         pause
         exit /b 1
     )
 )
 
-REM 运行主程序
-echo 启动天堂图片管理器...
+rem Run main program
+echo Starting TianTang Image Manager...
 python main.py
 
 pause

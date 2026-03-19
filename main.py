@@ -5,12 +5,20 @@ import sys
 import os
 from pathlib import Path
 
+# 设置Qt属性 - 必须在创建QApplication之前设置
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt
+
+# 启用高DPI缩放
+if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from ui.main_window import MainWindow
 from utils.logger import logger
@@ -30,12 +38,6 @@ def main():
         # 设置默认字体
         font = QFont("Microsoft YaHei", 9)
         app.setFont(font)
-        
-        # 启用高DPI缩放
-        if hasattr(Qt, 'AA_EnableHighDpiScaling'):
-            app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
-            app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
         # 创建并显示主窗口
         window = MainWindow()
