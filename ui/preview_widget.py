@@ -219,7 +219,27 @@ class PreviewWidget(QWidget):
         # 移动文件
         success, message = FileManager.move_image(image_path)
         
-        QMessageBox.information(self, "移动结果", message)
+        # 获取主窗口中的二次确认设置，决定是否显示结果信息
+        # 逐级查找父窗口直到找到MainWindow
+        parent_widget = self
+        main_window = None
+        while parent_widget:
+            if type(parent_widget).__name__ == 'MainWindow':
+                main_window = parent_widget
+                break
+            parent_widget = parent_widget.parent()
+        
+        # 检查是否需要显示确认信息
+        show_result_info = True
+        if main_window and hasattr(main_window, 'get_confirmation_setting'):
+            # 如果二次确认被关闭，我们也减少信息提示
+            show_result_info = main_window.get_confirmation_setting()
+        else:
+            show_result_info = True  # 默认显示
+        
+        if show_result_info:
+            QMessageBox.information(self, "移动结果", message)
+            
         self.info_label.setText(message)
         
         # 更新列表
@@ -246,19 +266,58 @@ class PreviewWidget(QWidget):
             self.show_next_image()
             return
         
-        # 确认删除
-        reply = QMessageBox.question(
-            self, '确认删除',
-            f'确定要删除图片 "{image_path.name}" 吗？',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        # 获取主窗口中的二次确认设置
+        # 逐级查找父窗口直到找到MainWindow
+        parent_widget = self
+        main_window = None
+        while parent_widget:
+            if type(parent_widget).__name__ == 'MainWindow':
+                main_window = parent_widget
+                break
+            parent_widget = parent_widget.parent()
+        
+        if main_window and hasattr(main_window, 'get_confirmation_setting'):
+            confirmation_needed = main_window.get_confirmation_setting()
+        else:
+            confirmation_needed = True  # 默认需要确认
+        
+        if confirmation_needed:
+            # 确认删除
+            reply = QMessageBox.question(
+                self, '确认删除',
+                f'确定要删除图片 "{image_path.name}" 吗？',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+        else:
+            # 直接删除，不显示确认对话框
+            reply = QMessageBox.Yes
         
         if reply == QMessageBox.Yes:
             # 删除文件
             success, message = FileManager.delete_image(image_path)
             
-            QMessageBox.information(self, "删除结果", message)
+            # 获取主窗口中的二次确认设置，决定是否显示结果信息
+            # 逐级查找父窗口直到找到MainWindow
+            parent_widget = self
+            main_window = None
+            while parent_widget:
+                if type(parent_widget).__name__ == 'MainWindow':
+                    main_window = parent_widget
+                    break
+                parent_widget = parent_widget.parent()
+            
+            # 检查是否需要显示确认信息
+            show_result_info = True
+            if main_window and hasattr(main_window, 'get_confirmation_setting'):
+                # 这里我们反转逻辑，如果二次确认被关闭，我们认为用户不希望看到太多提示
+                show_result_info = main_window.get_confirmation_setting()  # 如果设置了二次确认，则显示结果信息
+            else:
+                show_result_info = True  # 默认显示
+            
+            if show_result_info:
+                QMessageBox.information(self, "删除结果", message)
+                
             self.info_label.setText(message)
             
             # 更新列表

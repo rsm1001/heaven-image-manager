@@ -256,6 +256,21 @@ class ManagerWidget(QWidget):
         if not full_path.is_absolute():
             full_path = Config.BASE_DIR / source_dir
         
+        # 获取主窗口中的二次确认设置
+        # 逐级查找父窗口直到找到MainWindow
+        parent_widget = self
+        main_window = None
+        while parent_widget:
+            if type(parent_widget).__name__ == 'MainWindow':
+                main_window = parent_widget
+                break
+            parent_widget = parent_widget.parent()
+        
+        if main_window and hasattr(main_window, 'get_confirmation_setting'):
+            confirmation_needed = main_window.get_confirmation_setting()
+        else:
+            confirmation_needed = True  # 默认需要确认
+        
         # 确认操作
         confirm_msg = f"这将提取目录中的图片名称:\n{full_path}\n\n"
         if append_mode:
@@ -264,11 +279,15 @@ class ManagerWidget(QWidget):
             confirm_msg += "模式: 覆盖（清空原有数据，重新添加）\n"
         confirm_msg += "\n确定要继续吗？"
         
-        reply = QMessageBox.question(
-            self, "确认操作", confirm_msg,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        if confirmation_needed:
+            reply = QMessageBox.question(
+                self, "确认操作", confirm_msg,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+        else:
+            # 直接执行，不显示确认对话框
+            reply = QMessageBox.Yes
         
         if reply != QMessageBox.Yes:
             self.log_message("用户取消操作")
@@ -318,14 +337,34 @@ class ManagerWidget(QWidget):
             self.log_message("删除失败: 未选择项目")
             return
         
+        # 获取主窗口中的二次确认设置
+        # 逐级查找父窗口直到找到MainWindow
+        parent_widget = self
+        main_window = None
+        while parent_widget:
+            if type(parent_widget).__name__ == 'MainWindow':
+                main_window = parent_widget
+                break
+            parent_widget = parent_widget.parent()
+        
+        if main_window and hasattr(main_window, 'get_confirmation_setting'):
+            confirmation_needed = main_window.get_confirmation_setting()
+        else:
+            confirmation_needed = True  # 默认需要确认
+        
         # 确认删除
         item_str = "\n".join([f"{k}: {v}" for k, v in self.current_random_item.items()])
-        reply = QMessageBox.question(
-            self, "确认删除",
-            f"确定要从JSON中删除以下项目吗？\n\n{item_str}",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        
+        if confirmation_needed:
+            reply = QMessageBox.question(
+                self, "确认删除",
+                f"确定要从JSON中删除以下项目吗？\n\n{item_str}",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+        else:
+            # 直接删除，不显示确认对话框
+            reply = QMessageBox.Yes
         
         if reply == QMessageBox.Yes:
             self.log_message(f"开始删除项目: {self.current_random_item.get('name', '未知')}")
@@ -347,7 +386,27 @@ class ManagerWidget(QWidget):
             
             # 保存更新后的数据
             if FileManager.save_json_data(new_data):
-                QMessageBox.information(self, "成功", "项目已删除")
+                # 获取主窗口中的二次确认设置，决定是否显示结果信息
+                # 逐级查找父窗口直到找到MainWindow
+                parent_widget = self
+                main_window = None
+                while parent_widget:
+                    if type(parent_widget).__name__ == 'MainWindow':
+                        main_window = parent_widget
+                        break
+                    parent_widget = parent_widget.parent()
+                
+                # 检查是否需要显示确认信息
+                show_result_info = True
+                if main_window and hasattr(main_window, 'get_confirmation_setting'):
+                    # 如果二次确认被关闭，我们也减少信息提示
+                    show_result_info = main_window.get_confirmation_setting()
+                else:
+                    show_result_info = True  # 默认显示
+                
+                if show_result_info:
+                    QMessageBox.information(self, "成功", "项目已删除")
+                    
                 self.current_random_item = None
                 self.random_result_text.setPlainText("项目已删除")
                 self.load_table_data()
@@ -372,16 +431,55 @@ class ManagerWidget(QWidget):
             QMessageBox.information(self, "提示", "JSON文件已经为空")
             return
         
-        reply = QMessageBox.question(
-            self, "确认清空",
-            "确定要清空JSON文件中的所有数据吗？\n此操作不可撤销！",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        # 获取主窗口中的二次确认设置
+        # 逐级查找父窗口直到找到MainWindow
+        parent_widget = self
+        main_window = None
+        while parent_widget:
+            if type(parent_widget).__name__ == 'MainWindow':
+                main_window = parent_widget
+                break
+            parent_widget = parent_widget.parent()
+        
+        if main_window and hasattr(main_window, 'get_confirmation_setting'):
+            confirmation_needed = main_window.get_confirmation_setting()
+        else:
+            confirmation_needed = True  # 默认需要确认
+        
+        if confirmation_needed:
+            reply = QMessageBox.question(
+                self, "确认清空",
+                "确定要清空JSON文件中的所有数据吗？\n此操作不可撤销！",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+        else:
+            # 直接清空，不显示确认对话框
+            reply = QMessageBox.Yes
         
         if reply == QMessageBox.Yes:
             if FileManager.save_json_data([]):
-                QMessageBox.information(self, "成功", "JSON文件已清空")
+                # 获取主窗口中的二次确认设置，决定是否显示结果信息
+                # 逐级查找父窗口直到找到MainWindow
+                parent_widget = self
+                main_window = None
+                while parent_widget:
+                    if type(parent_widget).__name__ == 'MainWindow':
+                        main_window = parent_widget
+                        break
+                    parent_widget = parent_widget.parent()
+                
+                # 检查是否需要显示确认信息
+                show_result_info = True
+                if main_window and hasattr(main_window, 'get_confirmation_setting'):
+                    # 如果二次确认被关闭，我们也减少信息提示
+                    show_result_info = main_window.get_confirmation_setting()
+                else:
+                    show_result_info = True  # 默认显示
+                
+                if show_result_info:
+                    QMessageBox.information(self, "成功", "JSON文件已清空")
+                    
                 self.load_table_data()
                 self.update_stats()
                 self.log_message("JSON文件已清空")

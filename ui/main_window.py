@@ -30,8 +30,8 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT)
         
         # 设置窗口居中显示
-        if hasattr(Config, 'CENTER_ON_SCREEN') and Config.CENTER_ON_SCREEN:
-            self.center_on_screen()
+        #if hasattr(Config, 'CENTER_ON_SCREEN') and Config.CENTER_ON_SCREEN:
+        #    self.center_on_screen()
         
         # 初始化核心组件
         self.file_manager = FileManager()
@@ -76,6 +76,11 @@ class MainWindow(QMainWindow):
         
         logger.info("MainWindow initialized")
     
+    def setup_connections(self):
+        """设置信号连接"""
+        # 当选项卡改变时更新状态
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+    
     def center_on_screen(self):
         """将窗口居中显示在屏幕上"""
         # 获取主屏幕几何信息
@@ -111,6 +116,12 @@ class MainWindow(QMainWindow):
         refresh_action.triggered.connect(self.refresh_all)
         tools_menu.addAction(refresh_action)
         
+        # 添加二次确认选项
+        self.confirm_action = QAction('二次确认', self, checkable=True)
+        self.confirm_action.setChecked(True)  # 默认开启
+        self.confirm_action.triggered.connect(self.toggle_confirmation)
+        tools_menu.addAction(self.confirm_action)
+        
         # 帮助菜单
         help_menu = menu_bar.addMenu('帮助')
         
@@ -118,10 +129,15 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
     
-    def setup_connections(self):
-        """设置信号连接"""
-        # 当选项卡改变时更新状态
-        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+    def toggle_confirmation(self):
+        """切换二次确认功能"""
+        # 这里我们可以保存设置状态
+        current_state = self.confirm_action.isChecked()
+        self.status_bar.showMessage(f"二次确认: {'已开启' if current_state else '已关闭'}")
+        
+    def get_confirmation_setting(self):
+        """获取二次确认设置状态"""
+        return self.confirm_action.isChecked()
     
     def open_directory(self):
         """打开目录"""
@@ -170,15 +186,22 @@ class MainWindow(QMainWindow):
         # 停止所有后台任务
         self.download_widget.stop_all_downloads()
         
-        reply = QMessageBox.question(
-            self, '确认退出',
-            '确定要退出天堂图片管理器吗？',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        # 获取二次确认设置
+        confirmation_needed = self.get_confirmation_setting()
         
-        if reply == QMessageBox.Yes:
+        if confirmation_needed:
+            reply = QMessageBox.question(
+                self, '确认退出',
+                '确定要退出天堂图片管理器吗？',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                logger.info("Application closed by user")
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            # 如果关闭了二次确认，则直接关闭
             logger.info("Application closed by user")
             event.accept()
-        else:
-            event.ignore()
