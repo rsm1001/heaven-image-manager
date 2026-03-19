@@ -25,13 +25,21 @@ class Config:
     MAX_IMAGE_HEIGHT = 500
     
     # 下载配置
+    # 起始ID：批量下载的起始编号
     START_ID = 9009
+    # 总数：需要下载的图片总数
     TOTAL_COUNT = 450
+    # 重试次数：单次下载失败后的重试次数
     RETRY_TIMES = 3
+    # 重试延迟：重试前的延迟时间（秒）
     RETRY_DELAY = 15
+    # 请求延迟：每次请求之间的延迟时间（秒），避免过于频繁的请求
     REQUEST_DELAY = 2
+    # 代理重试次数：使用代理下载时的重试次数
     PROXY_RETRY_TIMES = 10
+    # 代理重试延迟：代理重试前的延迟时间（秒）
     PROXY_RETRY_DELAY = 20
+    # 基础URL：图片下载的基础URL模板，{}会被替换为图片ID
     BASE_URL = "https://cdn-msp.18comic.vip/media/albums/{}.jpg?u=1682391243"
     
     @classmethod
