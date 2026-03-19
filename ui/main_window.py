@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
         
         # 添加二次确认选项
         self.confirm_action = QAction('二次确认', self, checkable=True)
-        self.confirm_action.setChecked(True)  # 默认开启
+        self.confirm_action.setChecked(False)  # 默认关闭（不勾选）
         self.confirm_action.triggered.connect(self.toggle_confirmation)
         tools_menu.addAction(self.confirm_action)
         
