@@ -28,9 +28,9 @@ class ImageProcessor:
             # 计算缩放比例
             width_ratio = Config.MAX_IMAGE_WIDTH / img.width
             height_ratio = Config.MAX_IMAGE_HEIGHT / img.height
-            scale_ratio = min(width_ratio, height_ratio, 1.0)  # 不超过原图大小
+            scale_ratio = min(width_ratio, height_ratio)  # 移除1.0的限制，允许放大图片
             
-            if scale_ratio < 1.0:
+            if scale_ratio != 1.0:  # 只有当需要缩放时才调整
                 new_width = int(img.width * scale_ratio)
                 new_height = int(img.height * scale_ratio)
                 img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
@@ -66,14 +66,12 @@ class ImageProcessor:
         """计算缩放因子"""
         width_ratio = max_width / original_width
         height_ratio = max_height / original_height
-        return min(width_ratio, height_ratio, 1.0)  # 不放大原图
+        return min(width_ratio, height_ratio)  # 移除1.0的限制，允许放大图片
     
     @staticmethod
     def resize_pixmap(pixmap: QPixmap, max_size: QSize) -> QPixmap:
         """按比例缩放QPixmap"""
-        if pixmap.width() <= max_size.width() and pixmap.height() <= max_size.height():
-            return pixmap  # 如果图片小于最大尺寸，则不需要缩放
-        
+        # 允许放大或缩小图片
         return pixmap.scaled(
             max_size,
             aspectRatioMode=1,  # KeepAspectRatio

@@ -29,6 +29,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(Config.WINDOW_TITLE)
         self.setGeometry(100, 100, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT)
         
+        # 设置窗口居中显示
+        if hasattr(Config, 'CENTER_ON_SCREEN') and Config.CENTER_ON_SCREEN:
+            self.center_on_screen()
+        
         # 初始化核心组件
         self.file_manager = FileManager()
         self.image_processor = ImageProcessor()
@@ -66,7 +70,24 @@ class MainWindow(QMainWindow):
         # 连接信号
         self.setup_connections()
         
+        # 设置窗口居中显示
+        if hasattr(Config, 'CENTER_ON_SCREEN') and Config.CENTER_ON_SCREEN:
+            self.center_on_screen()
+        
         logger.info("MainWindow initialized")
+    
+    def center_on_screen(self):
+        """将窗口居中显示在屏幕上"""
+        # 获取主屏幕几何信息
+        from PyQt5.QtWidgets import QDesktopWidget
+        screen_geometry = QDesktopWidget().availableGeometry()
+        
+        # 计算窗口左上角坐标，使其居中
+        x = (screen_geometry.width() - self.width()) // 2
+        y = (screen_geometry.height() - self.height()) // 2
+        
+        # 移动窗口到计算出的位置
+        self.move(x, y)
     
     def create_menu_bar(self):
         """创建菜单栏"""

@@ -17,12 +17,17 @@ class Config:
     
     # 窗口配置
     WINDOW_TITLE = "天堂图片管理器 - PyQt版"
-    WINDOW_WIDTH = 1000
-    WINDOW_HEIGHT = 700
+    # 将窗口宽度和高度设为原来基础上放大2倍后，再取四分之三（即原来的1.5倍）
+    WINDOW_WIDTH = 1500
+    WINDOW_HEIGHT = 1050
+    # 屏幕居中标志（True表示启动时位于屏幕中央）
+    CENTER_ON_SCREEN = True
     
     # 图片显示配置
-    MAX_IMAGE_WIDTH = 800
-    MAX_IMAGE_HEIGHT = 500
+    # 原来是MAX_IMAGE_WIDTH = 800, MAX_IMAGE_HEIGHT = 500
+    # 放大1.5倍后是：
+    MAX_IMAGE_WIDTH = 1200
+    MAX_IMAGE_HEIGHT = 750
     
     # 下载配置
     # 起始ID：批量下载的起始编号
