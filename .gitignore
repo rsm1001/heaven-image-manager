@@ -138,5 +138,21 @@ ehthumbs.db
 Thumbs.db
 Icon?
 
-# Comic directory (images)
-comic/
+# Comic directory - exclude image files but keep JSON files
+comic/**/*.jpg
+comic/**/*.jpeg
+comic/**/*.png
+comic/**/*.gif
+comic/**/*.bmp
+!comic/**/*.json
+
+# OpenClaw/AI Agent files (private configurations)
+.openclaw/
+memory/
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+MEMORY.md
