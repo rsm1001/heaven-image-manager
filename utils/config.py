@@ -32,6 +32,8 @@ class Config:
     # 下载配置
     # 起始ID：批量下载的起始编号
     START_ID = 9009
+    # 最后下载的ID：用于记录最后成功下载的图片ID
+    LAST_DOWNLOADED_ID = 9008
     # 总数：需要下载的图片总数
     TOTAL_COUNT = 450
     # 重试次数：单次下载失败后的重试次数
