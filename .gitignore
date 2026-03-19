@@ -137,3 +137,6 @@ dmypy.json
 ehthumbs.db
 Thumbs.db
 Icon?
+
+# Comic directory (images)
+comic/
