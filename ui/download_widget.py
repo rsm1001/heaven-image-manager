@@ -298,7 +298,7 @@ class DownloadWidget(QWidget):
         """停止所有下载"""
         self.downloader.cancel_download()
         self.reset_buttons()
-        
+    
     def pause_download(self):
         """暂停下载 - 已移除此功能"""
         # 暂停功能已移除，此方法保留以防其他地方调用
