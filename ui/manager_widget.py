@@ -173,9 +173,13 @@ class ManagerWidget(QWidget):
         self.clear_json_button = QPushButton("清空JSON文件")
         self.clear_json_button.clicked.connect(self.clear_json_file)
         
+        self.open_trash_button = QPushButton("🗑️ 垃圾桶")
+        self.open_trash_button.clicked.connect(self.open_trash)
+        
         table_buttons_layout.addWidget(self.reload_table_button)
         table_buttons_layout.addWidget(self.clear_json_button)
         table_buttons_layout.addStretch()
+        table_buttons_layout.addWidget(self.open_trash_button)
         
         table_layout.addLayout(table_buttons_layout)
         table_layout.addWidget(self.data_table)
@@ -530,3 +534,9 @@ class ManagerWidget(QWidget):
         self.load_table_data()
         self.log_message("数据已刷新")
         logger.info("ManagerWidget refreshed")
+    
+    def open_trash(self):
+        """打开垃圾桶窗口"""
+        from .trash_widget import TrashWidget
+        trash_dialog = TrashWidget(self)
+        trash_dialog.exec_()

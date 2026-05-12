@@ -49,11 +49,17 @@ class Config:
     # 基础URL：图片下载的基础URL模板，{}会被替换为图片ID
     BASE_URL = "https://cdn-msp.18comic.vip/media/albums/{}.jpg?u=1682391243"
     
+    # 垃圾桶配置
+    TRASH_DIR = COMIC_DIR / "trash"
+    TRASH_RECORD_FILE = COMIC_DIR / "trash_records.json"
+    MAX_TRASH_COUNT = 1000
+    
     @classmethod
     def ensure_directories(cls):
         """确保必要目录存在"""
         cls.COMIC_DIR.mkdir(parents=True, exist_ok=True)
         cls.TARGET_DIR.mkdir(parents=True, exist_ok=True)
+        cls.TRASH_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # 确保目录存在
