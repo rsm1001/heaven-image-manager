@@ -145,6 +145,29 @@ class PreviewWidget(QWidget):
         else:
             self.image_label.clear()
             self.info_label.setText(f"无法加载图片: {image_path.name}")
+            
+            # 自动删除损坏/无法加载的文件，不弹确认框
+            success, _ = FileManager.delete_image(image_path)
+            if success:
+                logger.info(f"已自动删除损坏图片: {image_path.name}")
+                # 从列表中移除
+                del self.image_files[self.current_index]
+                # 调整索引
+                total = len(self.image_files)
+                if total == 0:
+                    self.current_index = -1
+                    self.image_label.clear()
+                    self.info_label.setText("所有图片已处理完成")
+                    self.update_counter()
+                    self.update_controls()
+                    return
+                if self.current_index >= total:
+                    self.current_index = total - 1
+                # 递归显示"新的当前张"（即原列表中的下一张）
+                self.show_current_image()
+            else:
+                # 删除也失败了（比如文件被锁），跳过继续显示下一张
+                self.show_next_image()
         
         self.update_counter()
         self.update_controls()
