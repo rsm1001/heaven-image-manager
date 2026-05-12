@@ -34,9 +34,13 @@ class PreviewWidget(QWidget):
     def init_ui(self):
         """初始化界面"""
         layout = QVBoxLayout(self)
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
         
         # 顶部控制面板
         control_layout = QHBoxLayout()
+        control_layout.setSpacing(0)
+        control_layout.setContentsMargins(0, 0, 0, 0)
         
         self.prev_button = QPushButton("上一张")
         self.prev_button.clicked.connect(self.show_prev_image)
@@ -84,6 +88,8 @@ class PreviewWidget(QWidget):
         
         # 底部信息栏
         info_layout = QHBoxLayout()
+        info_layout.setSpacing(0)
+        info_layout.setContentsMargins(0, 0, 0, 0)
         
         self.info_label = QLabel("就绪")
         self.info_label.setStyleSheet("font-size: 12px; color: gray;")

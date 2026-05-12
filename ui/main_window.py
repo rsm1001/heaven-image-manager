@@ -48,7 +48,8 @@ class MainWindow(QMainWindow):
 
         # 快捷按钮(与选项卡标签同行)
         self.open_101_button = QPushButton("📂 101")
-        self.open_101_button.setFixedHeight(24)
+        self.open_101_button.setFixedSize(80, 24)
+        self.open_101_button.setStyleSheet("padding: 0; margin: 0;")
         font = self.open_101_button.font()
         font.setPointSize(8)
         self.open_101_button.setFont(font)
@@ -57,7 +58,7 @@ class MainWindow(QMainWindow):
         # 创建选项卡部件
         self.tab_widget = QTabWidget()
         self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.tab_widget.setStyleSheet("QTabWidget::pane { margin: 0; border: 0; }")
+        self.tab_widget.setStyleSheet("QTabWidget::pane { padding: 0; margin: 0; border: 0; }")
 
         # 创建各个功能部件
         self.preview_widget = PreviewWidget()
@@ -72,6 +73,7 @@ class MainWindow(QMainWindow):
         # 将按钮与选项卡放在同一行
         tab_row_layout = QHBoxLayout()
         tab_row_layout.setContentsMargins(0, 0, 0, 0)
+        tab_row_layout.setSpacing(0)
         tab_row_layout.addWidget(self.open_101_button)
         tab_row_layout.addWidget(self.tab_widget, stretch=1)
 
