@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QGroupBox, QRadioButton, QButtonGroup, QFileDialog, QMessageBox,
-    QProgressBar, QTabWidget, QFormLayout
+    QProgressBar, QTabWidget, QFormLayout, QCheckBox
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
@@ -76,45 +76,54 @@ class ManagerWidget(QWidget):
         # 模式选择组
         mode_group = QGroupBox("处理模式")
         mode_layout = QVBoxLayout(mode_group)
-        
+
         self.mode_group = QButtonGroup()
-        
+
         self.append_radio = QRadioButton("追加模式 (保留原有数据，添加新数据)")
         self.append_radio.setChecked(True)
         self.overwrite_radio = QRadioButton("覆盖模式 (清空原有数据，重新添加)")
-        
+
         self.mode_group.addButton(self.append_radio)
         self.mode_group.addButton(self.overwrite_radio)
-        
+
         mode_layout.addWidget(self.append_radio)
         mode_layout.addWidget(self.overwrite_radio)
-        
+
+        # 删除选项组
+        delete_group = QGroupBox("提取后处理")
+        delete_layout = QVBoxLayout(delete_group)
+
+        self.delete_after_checkbox = QCheckBox("提取完成后删除源文件（不经过垃圾桶，直接删除）")
+
+        delete_layout.addWidget(self.delete_after_checkbox)
+
         # 操作按钮
         button_layout = QHBoxLayout()
-        
+
         self.extract_button = QPushButton("开始提取")
         self.extract_button.clicked.connect(self.extract_images)
-        
+
         self.refresh_button = QPushButton("刷新统计")
         self.refresh_button.clicked.connect(self.refresh)
-        
+
         button_layout.addWidget(self.extract_button)
         button_layout.addWidget(self.refresh_button)
         button_layout.addStretch()
-        
+
         # 日志区域
         log_group = QGroupBox("操作日志")
         log_layout = QVBoxLayout(log_group)
-        
+
         self.log_text = QTextEdit()
         self.log_text.setMaximumHeight(200)
         self.log_text.setReadOnly(True)
-        
+
         log_layout.addWidget(self.log_text)
-        
+
         # 添加到主布局
         layout.addWidget(source_group)
         layout.addWidget(mode_group)
+        layout.addWidget(delete_group)
         layout.addLayout(button_layout)
         layout.addWidget(log_group)
         layout.addStretch()
@@ -254,7 +263,9 @@ class ManagerWidget(QWidget):
             return
         
         append_mode = self.append_radio.isChecked()
+        delete_after_extract = self.delete_after_checkbox.isChecked()
         mode_text = "追加" if append_mode else "覆盖"
+        delete_text = "，删除源文件" if delete_after_extract else ""
         
         full_path = Path(source_dir)
         if not full_path.is_absolute():
@@ -281,6 +292,8 @@ class ManagerWidget(QWidget):
             confirm_msg += "模式: 追加（保留原有数据，添加新数据）\n"
         else:
             confirm_msg += "模式: 覆盖（清空原有数据，重新添加）\n"
+        if delete_after_extract:
+            confirm_msg += "注意: 提取完成后将直接删除源文件（不经过垃圾桶）！\n"
         confirm_msg += "\n确定要继续吗？"
         
         if confirmation_needed:
@@ -297,11 +310,11 @@ class ManagerWidget(QWidget):
             self.log_message("用户取消操作")
             return
         
-        self.log_message(f"开始处理目录: {full_path}，模式: {mode_text}")
-        
+        self.log_message(f"开始处理目录: {full_path}，模式: {mode_text}{delete_text}")
+
         # 执行提取
         result = FileManager.extract_image_names_from_directory(
-            full_path, append_mode
+            full_path, append_mode, delete_after_extract
         )
         
         if result["success"]:

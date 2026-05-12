@@ -297,15 +297,17 @@ class FileManager:
             return False
 
     @staticmethod
-    def extract_image_names_from_directory(source_dir: Path, 
-                                         append_mode: bool = True) -> dict:
+    def extract_image_names_from_directory(source_dir: Path,
+                                         append_mode: bool = True,
+                                         delete_after_extract: bool = False) -> dict:
         """
         从指定目录提取图片名称
-        
+
         Args:
             source_dir: 源图片目录路径
             append_mode: True=追加模式，False=覆盖模式
-            
+            delete_after_extract: True=提取后删除源文件，False=仅提取不删除
+
         Returns:
             包含操作结果的字典
         """
@@ -369,18 +371,34 @@ class FileManager:
             save_success = FileManager.save_json_data(updated_data, json_path)
             if not save_success:
                 return {"success": False, "message": "保存JSON失败"}
-            
+
+            # 提取后直接删除源文件（可选）
+            deleted_count = 0
+            if delete_after_extract:
+                for file_path in image_files:
+                    # 跳过已在追加模式下被去重的文件（它们的名字已在JSON中）
+                    if file_path.stem in [item.get('name') for item in new_items]:
+                        try:
+                            file_path.unlink()
+                            deleted_count += 1
+                            logger.info(f"提取后已直接删除源文件: {file_path.name}")
+                        except Exception as e:
+                            logger.error(f"删除源文件失败 {file_path.name}: {str(e)}")
+
             result_msg = f"成功提取 {len(new_items)} 个图片名称"
             if append_mode:
                 result_msg += f"（追加模式）"
             else:
                 result_msg += f"（覆盖模式）"
-            
+            if delete_after_extract and deleted_count > 0:
+                result_msg += f"，已直接删除 {deleted_count} 个源文件"
+
             return {
                 "success": True,
                 "message": result_msg,
                 "added_count": len(new_items),
                 "total_count": len(updated_data),
+                "deleted_count": deleted_count,
                 "mode": "append" if append_mode else "overwrite"
             }
             
