@@ -2,7 +2,8 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QSplitter, QStatusBar, QMenuBar, QMenu,
-    QAction, QFileDialog, QMessageBox, QGroupBox, QScrollArea, QSizePolicy
+    QAction, QFileDialog, QMessageBox, QGroupBox, QScrollArea, QSizePolicy,
+    QDialog, QListWidget, QTextEdit, QSplitter
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon, QFont
@@ -20,6 +21,60 @@ from utils.logger import logger
 from .preview_widget import PreviewWidget
 from .manager_widget import ManagerWidget
 from .download_widget import DownloadWidget
+
+
+class LogViewerDialog(QDialog):
+    """日志查看对话框"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("查看日志")
+        self.resize(800, 500)
+
+        # 主布局
+        layout = QHBoxLayout(self)
+
+        # 左侧：日志文件列表
+        self.log_list = QListWidget()
+        self.log_list.setMaximumWidth(200)
+
+        # 右侧：日志内容（只读）
+        self.log_content = QTextEdit()
+        self.log_content.setReadOnly(True)
+
+        # 将列表和文本框放入分割器
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(self.log_list)
+        splitter.addWidget(self.log_content)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+
+        layout.addWidget(splitter)
+
+        # 扫描日志目录
+        self.log_dir = project_root / "logs"
+        self.load_log_list()
+
+        # 连接信号
+        self.log_list.currentRowChanged.connect(self.on_log_selected)
+
+    def load_log_list(self):
+        """加载日志文件列表"""
+        if self.log_dir.exists():
+            log_files = sorted(self.log_dir.glob("*.log"), reverse=True)
+            for log_file in log_files:
+                self.log_list.addItem(log_file.name)
+
+    def on_log_selected(self, row):
+        """选中日志文件时加载内容"""
+        if row >= 0:
+            log_name = self.log_list.item(row).text()
+            log_path = self.log_dir / log_name
+            try:
+                with open(log_path, "r", encoding="utf-8") as f:
+                    self.log_content.setPlainText(f.read())
+            except Exception as e:
+                self.log_content.setPlainText(f"读取失败: {e}")
 
 
 class MainWindow(QMainWindow):
@@ -129,6 +184,13 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        # 查看菜单
+        view_menu = menu_bar.addMenu('查看')
+
+        log_action = QAction('查看日志', self)
+        log_action.triggered.connect(self.show_log_viewer)
+        view_menu.addAction(log_action)
+
         # 工具菜单
         tools_menu = menu_bar.addMenu('工具')
 
@@ -168,6 +230,11 @@ class MainWindow(QMainWindow):
             dir_path = Config.BASE_DIR / directory
             self.status_bar.showMessage(f"已选择目录: {dir_path}")
             logger.info(f"Selected directory: {dir_path}")
+
+    def show_log_viewer(self):
+        """显示日志查看器"""
+        dialog = LogViewerDialog(self)
+        dialog.exec_()
 
     def refresh_all(self):
         """刷新所有视图"""
