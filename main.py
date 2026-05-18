@@ -22,6 +22,7 @@ sys.path.insert(0, str(project_root))
 from PyQt5.QtGui import QFont
 from ui.main_window import MainWindow
 from utils.logger import logger
+from core.downloader import shutdown_download_pool
 
 
 def main():
@@ -29,29 +30,32 @@ def main():
     try:
         # 创建Qt应用
         app = QApplication(sys.argv)
-        
+
         # 设置应用属性
         app.setApplicationName("天堂图片管理器")
         app.setApplicationVersion("1.0.0")
         app.setOrganizationName("HeavenComic")
-        
+
         # 设置默认字体
         font = QFont("Microsoft YaHei", 9)
         app.setFont(font)
-        
+
+        # 应用退出时关闭下载线程池
+        app.aboutToQuit.connect(shutdown_download_pool)
+
         # 创建并显示主窗口
         window = MainWindow()
         window.show()
-        
+
         # 记录启动信息
         logger.info("Application started successfully")
-        
+
         # 运行应用
         exit_code = app.exec_()
-        
+
         # 记录退出信息
         logger.info(f"Application exited with code: {exit_code}")
-        
+
         sys.exit(exit_code)
         
     except Exception as e:

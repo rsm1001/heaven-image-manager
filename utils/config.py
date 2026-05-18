@@ -46,6 +46,8 @@ class Config:
     PROXY_RETRY_TIMES = 10
     # 代理重试延迟：代理重试前的延迟时间（秒）
     PROXY_RETRY_DELAY = 20
+    # 最大下载线程数：并行下载的线程数量
+    MAX_DOWNLOAD_WORKERS = 5
     # 基础URL：图片下载的基础URL模板，{}会被替换为图片ID
     BASE_URL = "https://cdn-msp.18comic.vip/media/albums/{}.jpg?u=1682391243"
     
