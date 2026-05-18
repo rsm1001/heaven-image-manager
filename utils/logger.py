@@ -1,8 +1,27 @@
 """日志工具模块"""
 import logging
 import sys
+import json
 from datetime import datetime
 from pathlib import Path
+
+
+class JsonFormatter(logging.Formatter):
+    """自定义JSON日志格式化器"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "name": record.name,
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno
+        }
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data, ensure_ascii=False)
 
 
 def setup_logger(name: str = "HeavenComic", level: int = logging.INFO):
@@ -30,10 +49,7 @@ def setup_logger(name: str = "HeavenComic", level: int = logging.INFO):
     log_file = log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
-    )
-    file_handler.setFormatter(file_formatter)
+    file_handler.setFormatter(JsonFormatter())
     logger.addHandler(file_handler)
     
     return logger
