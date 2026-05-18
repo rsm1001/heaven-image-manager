@@ -8,6 +8,7 @@ from PyQt5.QtCore import Qt, QSize
 from pathlib import Path
 import random
 import sys
+from datetime import datetime
 from pathlib import Path
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent
@@ -58,7 +59,7 @@ class PreviewWidget(QWidget):
         self.random_button.clicked.connect(self.show_random_image)
         
         self.refresh_button = QPushButton("刷新")
-        self.refresh_button.clicked.connect(self.refresh)
+        self.refresh_button.clicked.connect(lambda: self.on_refresh_button_clicked())
         
         control_layout.addWidget(self.prev_button)
         control_layout.addWidget(self.next_button)
@@ -128,24 +129,24 @@ class PreviewWidget(QWidget):
             self.image_label.clear()
             self.info_label.setText("没有图片可显示")
             return
-        
+
         image_path = self.image_files[self.current_index]
-        
+
         # 加载并显示图片
         pixmap = ImageProcessor.load_and_resize_image(image_path)
-        
+
         if pixmap:
             self.current_pixmap = pixmap
             self.image_label.setPixmap(pixmap)
             self.image_label.adjustSize()
-            
+
             # 更新图片信息
             image_info = ImageProcessor.get_image_info(image_path)
             self.info_label.setText(f"{image_path.name} - {image_info}")
         else:
             self.image_label.clear()
             self.info_label.setText(f"无法加载图片: {image_path.name}")
-            
+
             # 自动删除损坏/无法加载的文件，不弹确认框
             success, _ = FileManager.delete_image(image_path)
             if success:
@@ -168,8 +169,9 @@ class PreviewWidget(QWidget):
             else:
                 # 删除也失败了（比如文件被锁），跳过继续显示下一张
                 self.show_next_image()
-        
+
         self.update_counter()
+        self.update_controls()
         self.update_controls()
     
     def show_next_image(self):
@@ -237,17 +239,17 @@ class PreviewWidget(QWidget):
         """移动当前图片"""
         if not self.image_files or self.current_index < 0 or self.current_index >= len(self.image_files):
             return
-        
+
         image_path = self.image_files[self.current_index]
-        
+
         if not image_path.exists():
             self.info_label.setText("图片文件不存在")
             self.show_next_image()
             return
-        
+
         # 移动文件
-        success, message = FileManager.move_image(image_path)
-        
+        success, message, target_path = FileManager.move_image(image_path)
+
         # 获取主窗口中的二次确认设置，决定是否显示结果信息
         # 逐级查找父窗口直到找到MainWindow
         parent_widget = self
@@ -257,7 +259,7 @@ class PreviewWidget(QWidget):
                 main_window = parent_widget
                 break
             parent_widget = parent_widget.parent()
-        
+
         # 检查是否需要显示确认信息
         show_result_info = True
         if main_window and hasattr(main_window, 'get_confirmation_setting'):
@@ -265,14 +267,21 @@ class PreviewWidget(QWidget):
             show_result_info = main_window.get_confirmation_setting()
         else:
             show_result_info = True  # 默认显示
-        
+
         if show_result_info:
             QMessageBox.information(self, "移动结果", message)
-            
+
         self.info_label.setText(message)
-        
+
         # 更新列表
         if success:
+            FileManager.push_undo({
+                "type": "move",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "data": {"source": str(image_path), "target": str(target_path)}
+            })
+            if main_window:
+                main_window.update_undo_button_state()
             del self.image_files[self.current_index]
             if self.image_files:
                 if self.current_index >= len(self.image_files):
@@ -280,21 +289,21 @@ class PreviewWidget(QWidget):
             else:
                 self.current_index = -1
                 self.image_label.clear()
-        
+
         self.show_next_image()
     
     def delete_current_image(self):
         """删除当前图片"""
         if not self.image_files or self.current_index < 0 or self.current_index >= len(self.image_files):
             return
-        
+
         image_path = self.image_files[self.current_index]
-        
+
         if not image_path.exists():
             self.info_label.setText("图片文件不存在")
             self.show_next_image()
             return
-        
+
         # 获取主窗口中的二次确认设置
         # 逐级查找父窗口直到找到MainWindow
         parent_widget = self
@@ -304,12 +313,12 @@ class PreviewWidget(QWidget):
                 main_window = parent_widget
                 break
             parent_widget = parent_widget.parent()
-        
+
         if main_window and hasattr(main_window, 'get_confirmation_setting'):
             confirmation_needed = main_window.get_confirmation_setting()
         else:
             confirmation_needed = True  # 默认需要确认
-        
+
         if confirmation_needed:
             # 确认删除
             reply = QMessageBox.question(
@@ -321,11 +330,11 @@ class PreviewWidget(QWidget):
         else:
             # 直接删除，不显示确认对话框
             reply = QMessageBox.Yes
-        
+
         if reply == QMessageBox.Yes:
             # 删除文件
             success, message = FileManager.delete_image(image_path)
-            
+
             # 获取主窗口中的二次确认设置，决定是否显示结果信息
             # 逐级查找父窗口直到找到MainWindow
             parent_widget = self
@@ -335,7 +344,7 @@ class PreviewWidget(QWidget):
                     main_window = parent_widget
                     break
                 parent_widget = parent_widget.parent()
-            
+
             # 检查是否需要显示确认信息
             show_result_info = True
             if main_window and hasattr(main_window, 'get_confirmation_setting'):
@@ -343,14 +352,21 @@ class PreviewWidget(QWidget):
                 show_result_info = main_window.get_confirmation_setting()  # 如果设置了二次确认，则显示结果信息
             else:
                 show_result_info = True  # 默认显示
-            
+
             if show_result_info:
                 QMessageBox.information(self, "删除结果", message)
-                
+
             self.info_label.setText(message)
-            
+
             # 更新列表
             if success:
+                FileManager.push_undo({
+                    "type": "delete",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "data": {"name": image_path.stem, "original_path": str(image_path)}
+                })
+                if main_window:
+                    main_window.update_undo_button_state()
                 del self.image_files[self.current_index]
                 if self.image_files:
                     if self.current_index >= len(self.image_files):
@@ -358,7 +374,7 @@ class PreviewWidget(QWidget):
                 else:
                     self.current_index = -1
                     self.image_label.clear()
-            
+
             self.show_next_image()
     
     def update_counter(self):
@@ -380,17 +396,41 @@ class PreviewWidget(QWidget):
         """更新控件状态"""
         has_images = bool(self.image_files)
         has_valid_index = (0 <= self.current_index < len(self.image_files)) if self.image_files else False
-        
+
         self.prev_button.setEnabled(has_images)
         self.next_button.setEnabled(has_images)
         self.move_button.setEnabled(has_valid_index)
         self.delete_button.setEnabled(has_valid_index)
         self.random_button.setEnabled(has_images)
-    
-    def refresh(self):
-        """刷新"""
-        self.load_images()
-        logger.info("PreviewWidget refreshed")
+
+    def on_refresh_button_clicked(self):
+        """刷新按钮点击处理"""
+        self.refresh(reload=True)
+
+    def refresh(self, reload=True):
+        """刷新
+
+        Args:
+            reload: 是否重新加载文件列表并重置位置，False只刷新列表保持当前位置
+        """
+        if reload:
+            self.load_images()
+        else:
+            # 只重新加载文件列表，保持当前索引位置
+            self.image_files = FileManager.get_image_files()
+            # 确保 current_index 有效
+            if self.image_files:
+                if self.current_index < 0:
+                    self.current_index = 0
+                elif self.current_index >= len(self.image_files):
+                    self.current_index = len(self.image_files) - 1
+                self.show_current_image()
+            else:
+                self.current_index = -1
+                self.image_label.clear()
+                self.info_label.setText("comic目录中没有找到图片文件")
+            self.update_counter()
+            self.update_controls()
     
     def resizeEvent(self, event):
         """调整大小事件"""

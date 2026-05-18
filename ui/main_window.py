@@ -101,7 +101,12 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 快捷按钮(与选项卡标签同行)
+        # 快捷按钮(垂直排列)
+        button_column = QWidget()
+        button_column_layout = QVBoxLayout(button_column)
+        button_column_layout.setContentsMargins(0, 0, 0, 0)
+        button_column_layout.setSpacing(2)
+
         self.open_101_button = QPushButton("📂 101")
         self.open_101_button.setFixedSize(80, 24)
         self.open_101_button.setStyleSheet("padding: 0; margin: 0;")
@@ -109,6 +114,16 @@ class MainWindow(QMainWindow):
         font.setPointSize(8)
         self.open_101_button.setFont(font)
         self.open_101_button.clicked.connect(self.open_101_folder)
+
+        self.undo_button = QPushButton("↩ 撤销")
+        self.undo_button.setFixedSize(80, 24)
+        self.undo_button.setStyleSheet("padding: 0; margin: 0;")
+        self.undo_button.setEnabled(False)
+        self.undo_button.clicked.connect(self.on_undo)
+
+        button_column_layout.addWidget(self.open_101_button)
+        button_column_layout.addWidget(self.undo_button)
+        button_column_layout.addStretch()
 
         # 创建选项卡部件
         self.tab_widget = QTabWidget()
@@ -125,11 +140,11 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.manager_widget, "图片管理")
         self.tab_widget.addTab(self.download_widget, "批量下载")
 
-        # 将按钮与选项卡放在同一行
+        # 将按钮组与选项卡放在同一行
         tab_row_layout = QHBoxLayout()
         tab_row_layout.setContentsMargins(0, 0, 0, 0)
         tab_row_layout.setSpacing(0)
-        tab_row_layout.addWidget(self.open_101_button)
+        tab_row_layout.addWidget(button_column)
         tab_row_layout.addWidget(self.tab_widget, stretch=1)
 
         main_layout.addLayout(tab_row_layout)
@@ -241,13 +256,55 @@ class MainWindow(QMainWindow):
         current_tab = self.tab_widget.currentIndex()
 
         if current_tab == 0:  # 图片预览
-            self.preview_widget.refresh()
+            self.preview_widget.refresh(reload=True)
         elif current_tab == 1:  # 图片管理
             self.manager_widget.refresh()
         elif current_tab == 2:  # 批量下载
             self.download_widget.refresh()
 
         self.status_bar.showMessage("已刷新")
+        self.update_undo_button_state()
+
+    def update_undo_button_state(self):
+        """更新撤销按钮状态"""
+        has_history = len(self.file_manager.undo_stack) > 0
+        self.undo_button.setEnabled(has_history)
+
+    def on_undo(self):
+        """执行撤销操作"""
+        success, msg, undone_record = self.file_manager.undo()
+        if success:
+            self.status_bar.showMessage(msg)
+            last_op = undone_record
+
+            if last_op and last_op.get("type") in ("move", "delete"):
+                self.preview_widget.image_files = FileManager.get_image_files()
+
+                # 对于 move 操作使用 source，对于 delete 操作使用 original_path
+                op_data = last_op.get("data", {})
+                restored_source = op_data.get("source") or op_data.get("original_path")
+
+                # 定位到被撤回的文件
+                found = False
+                if restored_source:
+                    for i, f in enumerate(self.preview_widget.image_files):
+                        if str(f) == restored_source:
+                            self.preview_widget.current_index = i
+                            found = True
+                            break
+
+                if not found:
+                    self.preview_widget.current_index = 0
+
+                self.preview_widget.show_current_image()
+                self.update_undo_button_state()
+            elif last_op and last_op.get("type") in ("extract", "delete_item"):
+                self.manager_widget.refresh()
+                self.update_undo_button_state()
+            else:
+                self.refresh_all()
+        else:
+            QMessageBox.warning(self, "撤销失败", msg)
 
     def open_101_folder(self):
         """用系统文件管理器打开101文件夹"""

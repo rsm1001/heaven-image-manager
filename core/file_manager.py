@@ -3,11 +3,9 @@ import os
 import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
-from PIL import Image
 import json
 from datetime import datetime
 import sys
-from pathlib import Path
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -19,11 +17,139 @@ from utils.config import Config
 class FileManager:
     """文件管理类"""
 
+    # 操作历史栈（会话级，不持久化）
+    undo_stack: List[dict] = []
+
     @staticmethod
     def ensure_directories() -> None:
         """确保必要的目录存在"""
         Config.COMIC_DIR.mkdir(parents=True, exist_ok=True)
         Config.TARGET_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ==================== 操作历史与撤销 ====================
+
+    @classmethod
+    def push_undo(cls, record: dict) -> None:
+        """记录操作到历史栈"""
+        cls.undo_stack.append(record)
+        logger.info(f"操作已记录: {record['type']}")
+
+    @classmethod
+    def undo(cls) -> Tuple[bool, str, Optional[dict]]:
+        """执行撤销操作（逆序）
+
+        Returns:
+            Tuple[bool, str, Optional[dict]]: (是否成功, 消息, 被撤销的记录)
+        """
+        if not cls.undo_stack:
+            return False, "没有可撤销的操作", None
+
+        record = cls.undo_stack.pop()
+        op_type = record.get("type")
+        data = record.get("data", {})
+
+        try:
+            if op_type == "move":
+                result = cls._undo_move(data)
+                return result[0], result[1], record
+            elif op_type == "delete":
+                result = cls._undo_delete(data)
+                return result[0], result[1], record
+            elif op_type == "extract":
+                result = cls._undo_extract(data)
+                return result[0], result[1], record
+            elif op_type == "delete_item":
+                result = cls._undo_delete_item(data)
+                return result[0], result[1], record
+            else:
+                logger.error(f"未知的操作类型: {op_type}")
+                return False, f"未知的操作类型: {op_type}", record
+        except Exception as e:
+            logger.error(f"撤销操作失败: {str(e)}")
+            return False, f"撤销失败: {str(e)}", None
+
+    @classmethod
+    def _undo_move(cls, data: dict) -> Tuple[bool, str]:
+        """撤销移动操作"""
+        source = data.get("source")
+        target = data.get("target")
+
+        if not source or not target:
+            return False, "移动记录数据不完整"
+
+        source_path = Path(source) if isinstance(source, str) else source
+        target_path = Path(target) if isinstance(target, str) else target
+
+        if not target_path.exists():
+            return False, f"文件已被移动或删除: {target_path.name}"
+
+        if source_path.exists():
+            counter = 1
+            while source_path.exists():
+                source_path = target_path.parent / f"{source_path.stem}_{counter}{target_path.suffix}"
+                counter += 1
+
+        shutil.move(str(target_path), str(source_path))
+        logger.info(f"撤销移动: {target_path} -> {source_path}")
+        return True, f"已撤销移动: {source_path.name}"
+
+    @classmethod
+    def _undo_delete(cls, data: dict) -> Tuple[bool, str]:
+        """撤销删除操作"""
+        name = data.get("name")
+
+        if not name:
+            return False, "删除记录数据不完整"
+
+        success, msg = cls.restore_from_trash(name)
+        return success, f"已撤销删除: {name}" if success else msg
+
+    @classmethod
+    def _undo_extract(cls, data: dict) -> Tuple[bool, str]:
+        """撤销提取操作"""
+        added_items = data.get("added_items", [])
+        json_path = data.get("json_path")
+
+        if not added_items:
+            return False, "没有可撤销的提取项"
+
+        if json_path is None:
+            json_path = Config.COMIC_DIR / "image_names.json"
+        else:
+            json_path = Path(json_path) if isinstance(json_path, str) else json_path
+
+        existing_data = cls.load_json_data(json_path)
+        added_names = {item.get("name") for item in added_items}
+        updated_data = [item for item in existing_data if item.get("name") not in added_names]
+
+        cls.save_json_data(updated_data, json_path)
+        logger.info(f"撤销提取: 移除了 {len(added_items)} 项")
+        return True, f"已撤销提取: 移除了 {len(added_items)} 项"
+
+    @classmethod
+    def _undo_delete_item(cls, data: dict) -> Tuple[bool, str]:
+        """撤销删除JSON项操作"""
+        item = data.get("item")
+        json_path = data.get("json_path")
+
+        if not item:
+            return False, "没有可撤销的项"
+
+        if json_path is None:
+            json_path = Config.COMIC_DIR / "image_names.json"
+        else:
+            json_path = Path(json_path) if isinstance(json_path, str) else json_path
+
+        existing_data = cls.load_json_data(json_path)
+        existing_data.append(item)
+        cls.save_json_data(existing_data, json_path)
+        logger.info(f"撤销删除项: {item.get('name')}")
+        return True, f"已撤销删除项: {item.get('name')}"
+
+    @classmethod
+    def clear_undo_stack(cls) -> None:
+        """清空操作历史（通常不需要调用）"""
+        cls.undo_stack.clear()
 
     @staticmethod
     def get_image_files(directory: Optional[Path] = None) -> List[Path]:
@@ -54,14 +180,18 @@ class FileManager:
         return sorted(unique_files, key=lambda x: x.name.lower())
 
     @staticmethod
-    def move_image(image_path: Path, target_dir: Optional[Path] = None) -> Tuple[bool, str]:
-        """移动图片到目标目录"""
+    def move_image(image_path: Path, target_dir: Optional[Path] = None) -> Tuple[bool, str, Optional[Path]]:
+        """移动图片到目标目录
+
+        Returns:
+            Tuple[bool, str, Optional[Path]]: (是否成功, 消息, 实际目标路径)
+        """
         if target_dir is None:
             target_dir = Config.TARGET_DIR
-            
+
         try:
             target_path = target_dir / image_path.name
-            
+
             # 如果目标文件已存在，添加序号
             counter = 1
             while target_path.exists():
@@ -70,16 +200,16 @@ class FileManager:
                     base_name = '_'.join(name_parts[:-1])
                 else:
                     base_name = image_path.stem
-                
+
                 target_path = target_dir / f"{base_name}_{counter}{image_path.suffix}"
                 counter += 1
-            
+
             shutil.move(str(image_path), str(target_path))
             logger.info(f"Moved image from {image_path} to {target_path}")
-            return True, f"已移动到: {target_path.name}"
+            return True, f"已移动到: {target_path.name}", target_path
         except Exception as e:
             logger.error(f"Failed to move image {image_path}: {str(e)}")
-            return False, f"移动失败: {str(e)}"
+            return False, f"移动失败: {str(e)}", None
 
     @staticmethod
     def delete_image(image_path: Path) -> Tuple[bool, str]:
@@ -397,6 +527,7 @@ class FileManager:
                 "success": True,
                 "message": result_msg,
                 "added_count": len(new_items),
+                "added_items": new_items,
                 "total_count": len(updated_data),
                 "deleted_count": deleted_count,
                 "mode": "append" if append_mode else "overwrite"

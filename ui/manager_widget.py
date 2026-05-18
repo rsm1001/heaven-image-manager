@@ -318,6 +318,25 @@ class ManagerWidget(QWidget):
         )
         
         if result["success"]:
+            # 记录提取操作历史
+            FileManager.push_undo({
+                "type": "extract",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "data": {
+                    "added_items": result.get("added_items", []),
+                    "json_path": str(Config.COMIC_DIR / "image_names.json")
+                }
+            })
+            # 更新撤销按钮状态
+            parent_widget = self
+            main_window = None
+            while parent_widget:
+                if type(parent_widget).__name__ == 'MainWindow':
+                    main_window = parent_widget
+                    break
+                parent_widget = parent_widget.parent()
+            if main_window:
+                main_window.update_undo_button_state()
             QMessageBox.information(self, "成功", result["message"])
             self.log_message(f"操作成功: {result['message']}")
         else:
@@ -385,11 +404,12 @@ class ManagerWidget(QWidget):
         
         if reply == QMessageBox.Yes:
             self.log_message(f"开始删除项目: {self.current_random_item.get('name', '未知')}")
-            
+            deleted_item = self.current_random_item.copy()
+
             # 从数据中移除该项目
             data = FileManager.load_json_data()
             new_data = []
-            
+
             for item in data:
                 # 比较所有键值对
                 match = True
@@ -397,12 +417,28 @@ class ManagerWidget(QWidget):
                     if key not in item or item[key] != value:
                         match = False
                         break
-                
+
                 if not match:
                     new_data.append(item)
-            
+
             # 保存更新后的数据
             if FileManager.save_json_data(new_data):
+                # 记录删除操作历史
+                FileManager.push_undo({
+                    "type": "delete_item",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "data": {"item": deleted_item, "json_path": str(Config.COMIC_DIR / "image_names.json")}
+                })
+                # 更新撤销按钮状态
+                parent_widget = self
+                main_window = None
+                while parent_widget:
+                    if type(parent_widget).__name__ == 'MainWindow':
+                        main_window = parent_widget
+                        break
+                    parent_widget = parent_widget.parent()
+                if main_window:
+                    main_window.update_undo_button_state()
                 # 获取主窗口中的二次确认设置，决定是否显示结果信息
                 # 逐级查找父窗口直到找到MainWindow
                 parent_widget = self
@@ -412,7 +448,7 @@ class ManagerWidget(QWidget):
                         main_window = parent_widget
                         break
                     parent_widget = parent_widget.parent()
-                
+
                 # 检查是否需要显示确认信息
                 show_result_info = True
                 if main_window and hasattr(main_window, 'get_confirmation_setting'):
@@ -420,10 +456,10 @@ class ManagerWidget(QWidget):
                     show_result_info = main_window.get_confirmation_setting()
                 else:
                     show_result_info = True  # 默认显示
-                
+
                 if show_result_info:
                     QMessageBox.information(self, "成功", "项目已删除")
-                    
+
                 self.current_random_item = None
                 self.random_result_text.setPlainText("项目已删除")
                 self.load_table_data()
