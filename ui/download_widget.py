@@ -180,9 +180,9 @@ class DownloadWidget(QWidget):
                 start_id = self.current_start_id  # 使用实际开始下载的ID
                 # 计算最后成功的ID - 从start_id到start_id+total-1中，找出最高的成功ID
                 # 由于我们不知道具体哪些ID成功了（除非从结果中获取），我们保守地使用成功数量
-                # 假设下载是连续的，那么最后成功下载的ID = start_id + 成功数量 - 1
+                # 假设下载是连续的，那么最后成功下载的ID = start_id + 总数 - 1
                 # 但这个计算可能不准确，如果我们知道确切的成功ID，我们应该使用最大的那个
-                
+
                 # 计算最后成功的ID
                 last_successful_id = None
                 if result.get("success_ids"):  # 如果下载器提供成功ID列表
@@ -192,7 +192,7 @@ class DownloadWidget(QWidget):
                 else:
                     # 如果没有明确的成功ID列表，我们需要保守处理
                     # 仅当没有任何失败ID在最后部分时，我们才能安全地使用计算值
-                    expected_last = start_id + success_count - 1
+                    expected_last = start_id + total - 1  # 注意：这里用total而不是success_count
                     if fail_ids:
                         # 如果有失败的ID，找出最高的成功ID
                         all_attempted = set(range(start_id, start_id + total))

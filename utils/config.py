@@ -57,6 +57,10 @@ class Config:
     TRASH_DIR = COMIC_DIR / "trash"
     TRASH_RECORD_FILE = COMIC_DIR / "trash_records.json"
     MAX_TRASH_COUNT = 1000
+
+    # 下载记录配置
+    DOWNLOAD_RECORD_FILE = COMIC_DIR / "download_records.json"
+    MAX_DOWNLOAD_RECORD_COUNT = 5000
     
     @classmethod
     def ensure_directories(cls):
