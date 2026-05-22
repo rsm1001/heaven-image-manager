@@ -28,6 +28,8 @@ class Config:
     # 调整后是：
     MAX_IMAGE_WIDTH = 800
     MAX_IMAGE_HEIGHT = 550
+    # 幻灯片间隔（毫秒）
+    SLIDE_INTERVAL_MS = 3000
     
     # 下载配置
     # 起始ID：批量下载的起始编号

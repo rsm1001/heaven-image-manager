@@ -18,6 +18,7 @@ from core.file_manager import FileManager
 from core.image_processor import ImageProcessor
 from utils.config import Config
 from utils.logger import logger
+from .fullscreen_window import FullScreenWindow
 
 
 class PreviewWidget(QWidget):
@@ -60,13 +61,17 @@ class PreviewWidget(QWidget):
         
         self.refresh_button = QPushButton("刷新")
         self.refresh_button.clicked.connect(lambda: self.on_refresh_button_clicked())
-        
+
+        self.fullscreen_button = QPushButton("全屏")
+        self.fullscreen_button.clicked.connect(self.show_fullscreen)
+
         control_layout.addWidget(self.prev_button)
         control_layout.addWidget(self.next_button)
         control_layout.addWidget(self.move_button)
         control_layout.addWidget(self.delete_button)
         control_layout.addWidget(self.random_button)
         control_layout.addWidget(self.refresh_button)
+        control_layout.addWidget(self.fullscreen_button)
         control_layout.addStretch()
         
         layout.addLayout(control_layout)
@@ -402,10 +407,23 @@ class PreviewWidget(QWidget):
         self.move_button.setEnabled(has_valid_index)
         self.delete_button.setEnabled(has_valid_index)
         self.random_button.setEnabled(has_images)
+        self.fullscreen_button.setEnabled(has_valid_index)
 
     def on_refresh_button_clicked(self):
         """刷新按钮点击处理"""
         self.refresh(reload=True)
+
+    def show_fullscreen(self):
+        """显示全屏预览"""
+        if not self.image_files or self.current_index < 0:
+            return
+
+        self.fullscreen_window = FullScreenWindow(self.image_files, self.current_index, self)
+        self.fullscreen_window.exec_()
+        # 关闭后更新当前索引
+        self.current_index = self.fullscreen_window.current_index
+        self.update_counter()
+        self.update_controls()
 
     def refresh(self, reload=True):
         """刷新
