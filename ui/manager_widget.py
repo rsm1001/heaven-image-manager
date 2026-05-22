@@ -3,9 +3,9 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QGroupBox, QRadioButton, QButtonGroup, QFileDialog, QMessageBox,
-    QProgressBar, QTabWidget, QFormLayout, QCheckBox
+    QProgressBar, QTabWidget, QFormLayout, QCheckBox, QSpinBox
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
 from pathlib import Path
 import random
@@ -18,6 +18,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.file_manager import FileManager
+from core.image_validator import BatchValidator, ValidationReportExporter
 from utils.config import Config
 from utils.logger import logger
 
@@ -50,7 +51,11 @@ class ManagerWidget(QWidget):
         # 统计信息选项卡
         stats_tab = self.create_stats_tab()
         tab_widget.addTab(stats_tab, "统计信息")
-        
+
+        # 图片校验选项卡
+        validator_tab = self.create_validator_tab()
+        tab_widget.addTab(validator_tab, "图片校验")
+
         layout.addWidget(tab_widget)
     
     def create_extract_tab(self):
@@ -238,8 +243,323 @@ class ManagerWidget(QWidget):
         layout.addWidget(stats_group)
         layout.addLayout(refresh_layout)
         layout.addStretch()
-        
+
         return widget
+
+    def create_validator_tab(self):
+        """创建图片校验选项卡"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # 校验设置组
+        settings_group = QGroupBox("校验设置")
+        settings_layout = QFormLayout(settings_group)
+
+        # 目录选择
+        dir_layout = QHBoxLayout()
+        self.validator_dir_input = QLineEdit()
+        self.validator_dir_input.setText(str(Config.COMIC_DIR))
+        browse_button = QPushButton("浏览...")
+        browse_button.clicked.connect(self.browse_validator_dir)
+        dir_layout.addWidget(self.validator_dir_input)
+        dir_layout.addWidget(browse_button)
+        settings_layout.addRow("校验目录:", dir_layout)
+
+        # 校验线程数
+        thread_layout = QHBoxLayout()
+        self.validator_threads_spin = QSpinBox()
+        self.validator_threads_spin.setRange(1, 16)
+        self.validator_threads_spin.setValue(5)
+        thread_layout.addWidget(self.validator_threads_spin)
+        thread_layout.addWidget(QLabel("线程"))
+        thread_layout.addStretch()
+        settings_layout.addRow("并发线程:", thread_layout)
+
+        # 控制按钮
+        button_layout = QHBoxLayout()
+        self.validator_start_button = QPushButton("开始校验")
+        self.validator_start_button.clicked.connect(self.start_validation)
+        self.validator_stop_button = QPushButton("停止校验")
+        self.validator_stop_button.clicked.connect(self.stop_validation)
+        self.validator_stop_button.setEnabled(False)
+        button_layout.addWidget(self.validator_start_button)
+        button_layout.addWidget(self.validator_stop_button)
+        button_layout.addStretch()
+        settings_layout.addRow("", button_layout)
+
+        layout.addWidget(settings_group)
+
+        # 进度显示组
+        progress_group = QGroupBox("校验进度")
+        progress_layout = QVBoxLayout(progress_group)
+
+        self.validator_progress_bar = QProgressBar()
+        self.validator_progress_label = QLabel("待校验")
+        progress_layout.addWidget(self.validator_progress_label)
+        progress_layout.addWidget(self.validator_progress_bar)
+
+        layout.addWidget(progress_group)
+
+        # 结果显示组
+        result_group = QGroupBox("校验结果")
+        result_layout = QVBoxLayout(result_group)
+
+        # 结果表格
+        self.validator_result_table = QTableWidget()
+        self.validator_result_table.setColumnCount(4)
+        self.validator_result_table.setHorizontalHeaderLabels(["状态", "文件名", "大小(KB)", "错误信息"])
+        self.validator_result_table.setColumnWidth(0, 60)
+        self.validator_result_table.setColumnWidth(1, 150)
+        self.validator_result_table.setColumnWidth(2, 80)
+        self.validator_result_table.horizontalHeader().setStretchLastSection(True)
+        self.validator_result_table.setMinimumHeight(200)
+
+        # 结果统计标签
+        self.validator_summary_label = QLabel("待校验")
+        result_layout.addWidget(self.validator_summary_label)
+        result_layout.addWidget(self.validator_result_table)
+
+        layout.addWidget(result_group)
+
+        # 操作按钮组
+        action_layout = QHBoxLayout()
+
+        self.validator_export_json_button = QPushButton("导出JSON报告")
+        self.validator_export_json_button.clicked.connect(self.export_validation_json)
+        self.validator_export_json_button.setEnabled(False)
+
+        self.validator_export_txt_button = QPushButton("导出TXT报告")
+        self.validator_export_txt_button.clicked.connect(self.export_validation_txt)
+        self.validator_export_txt_button.setEnabled(False)
+
+        self.validator_delete_button = QPushButton("删除选中(不经过垃圾桶)")
+        self.validator_delete_button.clicked.connect(self.delete_selected_corrupted)
+        self.validator_delete_button.setEnabled(False)
+
+        action_layout.addWidget(self.validator_export_json_button)
+        action_layout.addWidget(self.validator_export_txt_button)
+        action_layout.addWidget(self.validator_delete_button)
+        action_layout.addStretch()
+
+        layout.addLayout(action_layout)
+
+        return widget
+
+    def browse_validator_dir(self):
+        """浏览校验目录"""
+        initial_dir = Config.COMIC_DIR
+        if not initial_dir.exists():
+            initial_dir = Config.BASE_DIR
+
+        dir_path = QFileDialog.getExistingDirectory(
+            self, "选择要校验图片的目录", str(initial_dir)
+        )
+
+        if dir_path:
+            self.validator_dir_input.setText(dir_path)
+
+    def start_validation(self):
+        """开始校验"""
+        dir_path = self.validator_dir_input.text().strip()
+        if not dir_path:
+            QMessageBox.warning(self, "警告", "请输入校验目录路径")
+            return
+
+        directory = Path(dir_path)
+        if not directory.is_absolute():
+            directory = Config.BASE_DIR / directory
+
+        if not directory.exists():
+            QMessageBox.warning(self, "警告", f"目录不存在: {directory}")
+            return
+
+        # 禁用开始按钮，启用停止按钮
+        self.validator_start_button.setEnabled(False)
+        self.validator_stop_button.setEnabled(True)
+        self.validator_export_json_button.setEnabled(False)
+        self.validator_export_txt_button.setEnabled(False)
+        self.validator_delete_button.setEnabled(False)
+
+        # 清空结果表格
+        self.validator_result_table.setRowCount(0)
+
+        # 获取线程数
+        max_workers = self.validator_threads_spin.value()
+
+        # 创建校验器
+        self.validator = BatchValidator(max_workers=max_workers)
+
+        # 启动后台校验线程
+        self.validation_thread = ValidationThread(
+            self.validator, directory
+        )
+        self.validation_thread.progress_signal.connect(self.on_validation_progress)
+        self.validation_thread.completed_signal.connect(self.on_validation_completed)
+        self.validation_thread.start()
+
+    def stop_validation(self):
+        """停止校验"""
+        if hasattr(self, 'validation_thread') and self.validation_thread:
+            self.validation_thread.stop()
+            self.validation_thread.wait()
+        if hasattr(self, 'validator') and self.validator:
+            self.validator.cancel()
+        self.reset_validator_buttons()
+        self.validator_progress_label.setText("校验已停止")
+
+    def on_validation_progress(self, current: int, total: int, current_file: str):
+        """校验进度回调"""
+        percentage = int((current / total) * 100) if total > 0 else 0
+        self.validator_progress_bar.setValue(percentage)
+        self.validator_progress_label.setText(f"校验中: {current}/{total} ({percentage}%) - {current_file}")
+
+    def on_validation_completed(self, results: list):
+        """校验完成回调"""
+        self.reset_validator_buttons()
+
+        # 显示结果统计
+        corrupted = [r for r in results if not r.is_valid]
+        valid = [r for r in results if r.is_valid]
+
+        self.validator_summary_label.setText(
+            f"校验完成 - 总计: {len(results)} 张, 正常: {len(valid)} 张, 损坏: {len(corrupted)} 张"
+        )
+
+        # 填充结果表格
+        self.validator_result_table.setRowCount(len(results))
+        for row, result in enumerate(results):
+            from PyQt5.QtWidgets import QTableWidgetItem
+
+            # 状态
+            status_item = QTableWidgetItem("✓" if result.is_valid else "✗")
+            status_item.setForeground(Qt.green if result.is_valid else Qt.red)
+            self.validator_result_table.setItem(row, 0, status_item)
+
+            # 文件名
+            self.validator_result_table.setItem(row, 1, QTableWidgetItem(result.path.name))
+
+            # 大小
+            self.validator_result_table.setItem(row, 2, QTableWidgetItem(str(result.file_size_kb)))
+
+            # 错误信息
+            error_text = "" if result.is_valid else (result.error_msg or result.error_type or "未知错误")
+            self.validator_result_table.setItem(row, 3, QTableWidgetItem(error_text))
+
+        # 启用导出按钮
+        if corrupted:
+            self.validator_export_json_button.setEnabled(True)
+            self.validator_export_txt_button.setEnabled(True)
+            self.validator_delete_button.setEnabled(True)
+
+        self.validator_progress_label.setText(f"校验完成 - 发现 {len(corrupted)} 张损坏图片")
+
+    def reset_validator_buttons(self):
+        """重置校验按钮状态"""
+        self.validator_start_button.setEnabled(True)
+        self.validator_stop_button.setEnabled(False)
+
+    def export_validation_json(self):
+        """导出JSON报告"""
+        if not hasattr(self, 'validator') or not self.validator:
+            return
+
+        results = self.validator._results
+        if not results:
+            QMessageBox.warning(self, "警告", "没有可导出的校验结果")
+            return
+
+        dir_path = self.validator_dir_input.text().strip()
+        directory = Path(dir_path) if dir_path else Config.COMIC_DIR
+
+        default_name = f"corrupted_images_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出JSON报告", str(directory / default_name),
+            "JSON Files (*.json)"
+        )
+
+        if file_path:
+            if ValidationReportExporter.export_json(results, Path(file_path)):
+                QMessageBox.information(self, "成功", f"JSON报告已导出:\n{file_path}")
+            else:
+                QMessageBox.critical(self, "错误", "导出JSON报告失败")
+
+    def export_validation_txt(self):
+        """导出TXT报告"""
+        if not hasattr(self, 'validator') or not self.validator:
+            return
+
+        results = self.validator._results
+        if not results:
+            QMessageBox.warning(self, "警告", "没有可导出的校验结果")
+            return
+
+        dir_path = self.validator_dir_input.text().strip()
+        directory = Path(dir_path) if dir_path else Config.COMIC_DIR
+
+        default_name = f"corrupted_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出TXT报告", str(directory / default_name),
+            "Text Files (*.txt)"
+        )
+
+        if file_path:
+            if ValidationReportExporter.export_txt(results, Path(file_path), directory):
+                QMessageBox.information(self, "成功", f"TXT报告已导出:\n{file_path}")
+            else:
+                QMessageBox.critical(self, "错误", "导出TXT报告失败")
+
+    def delete_selected_corrupted(self):
+        """删除选中的损坏图片"""
+        if not hasattr(self, 'validator') or not self.validator:
+            return
+
+        selected_rows = self.validator_result_table.selectedIndexes()
+        if not selected_rows:
+            QMessageBox.warning(self, "警告", "请先选择要删除的图片")
+            return
+
+        # 获取选中的行号
+        row_set = set()
+        for index in selected_rows:
+            row_set.add(index.row())
+
+        # 收集要删除的文件
+        corrupted = self.validator.get_corrupted()
+        selected_corrupted = []
+        for row in sorted(row_set):
+            if row < len(corrupted):
+                selected_corrupted.append(corrupted[row])
+
+        if not selected_corrupted:
+            QMessageBox.warning(self, "警告", "选中的图片中没有损坏的图片")
+            return
+
+        # 确认删除
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要永久删除选中的 {len(selected_corrupted)} 张损坏图片吗？\n此操作不可撤销！",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # 执行删除
+        deleted_count = 0
+        for result in selected_corrupted:
+            try:
+                if result.path.exists():
+                    result.path.unlink()
+                    deleted_count += 1
+                    logger.info(f"已删除损坏图片: {result.path}")
+            except Exception as e:
+                logger.error(f"删除图片失败 {result.path}: {e}")
+
+        QMessageBox.information(self, "完成", f"已删除 {deleted_count} 张损坏图片")
+
+        # 刷新表格（移除已删除的项）
+        self.on_validation_completed(self.validator._results)
     
     def browse_source_dir(self):
         """浏览源目录"""
@@ -589,3 +909,37 @@ class ManagerWidget(QWidget):
         from .trash_widget import TrashWidget
         trash_dialog = TrashWidget(self)
         trash_dialog.exec_()
+
+
+class ValidationThread(QThread):
+    """图片校验工作线程"""
+    progress_signal = pyqtSignal(int, int, str)  # current, total, current_file
+    completed_signal = pyqtSignal(list)  # results
+
+    def __init__(self, validator, directory):
+        super().__init__()
+        self.validator = validator
+        self.directory = directory
+        self.is_running = False
+
+    def run(self):
+        """执行校验"""
+        self.is_running = True
+        self.validator.validate_directory(
+            self.directory,
+            progress_callback=self._emit_progress,
+            completed_callback=self._emit_completed
+        )
+
+    def _emit_progress(self, current, total, current_file):
+        """发射进度信号"""
+        self.progress_signal.emit(current, total, current_file)
+
+    def _emit_completed(self, results):
+        """发射完成信号"""
+        self.completed_signal.emit(results)
+
+    def stop(self):
+        """停止校验"""
+        self.is_running = False
+        self.validator.cancel()
