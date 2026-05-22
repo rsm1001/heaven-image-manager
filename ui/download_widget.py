@@ -8,6 +8,7 @@ from PyQt5.QtCore import Qt, pyqtSlot
 import sys
 import json
 from pathlib import Path
+from win10toast import ToastNotifier
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -235,7 +236,7 @@ class DownloadWidget(QWidget):
                     # 假设成功下载了前N个，计算最后成功下载的ID
                     # 如果我们不知道确切的ID，我们需要依赖progress回调的current值
                     last_downloaded_id = self.current_start_id + self.downloaded_count - 1
-                    
+
                     # 更新配置文件中的最后下载ID
                     import json
                     try:
@@ -243,27 +244,39 @@ class DownloadWidget(QWidget):
                             config_data = json.load(f)
                     except (FileNotFoundError, json.JSONDecodeError):
                         config_data = {}
-                    
+
                     # 为保险起见，确保我们不记录失败的ID
                     # 可能需要更复杂的方法来确认哪些ID确实成功了
-                    
+
                     # 这里我们需要一种更精确的方法来确定最后真正成功的ID
                     # 由于我们无法区分进度回调中的"完成"和"成功"，
                     # 最保险的方法是只记录确认成功的结果
                     config_data['last_downloaded_id'] = last_downloaded_id
                     with open('config.json', 'w', encoding='utf-8') as f:
                         json.dump(config_data, f, ensure_ascii=False, indent=4)
-                    
+
                     # 更新界面上的起始ID为下一个待下载的ID
                     self.start_id_spin.setValue(last_downloaded_id + 1)
-                    
+
                     self.log_status(f"下载被取消，最后下载ID: {last_downloaded_id}, 下次将从ID {last_downloaded_id + 1} 开始")
-                    
+
                 self.log_status("下载被用户取消")
             else:
                 self.log_status("下载过程中出现错误")
-        
+
         self.reset_buttons()
+
+        # 发送 Windows Toast 通知
+        total_success = result.get("success_count", 0)
+        total_fail = result.get("fail_count", 0)
+        if total_success > 0:
+            toaster = ToastNotifier()
+            toaster.show_toast(
+                "下载完成",
+                f"成功 {total_success} 张，失败 {total_fail} 张",
+                duration=5,
+                threaded=True
+            )
     
     @pyqtSlot(str)
     def on_status_update(self, status):
