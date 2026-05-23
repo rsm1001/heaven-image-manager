@@ -1,0 +1,266 @@
+"""数据管理选项卡模块"""
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
+    QPushButton, QTextEdit, QTableWidget, QTableWidgetItem,
+    QHeaderView, QMessageBox
+)
+from PyQt5.QtGui import QFont
+from pathlib import Path
+import sys
+import random
+import logging
+from datetime import datetime
+
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+from utils.config import Config
+from core.file_manager import FileManager
+
+logger = logging.getLogger("HeavenComic")
+
+
+class DataTabWidget(QWidget):
+    """数据管理选项卡组件"""
+
+    def __init__(self, parent_widget):
+        """初始化选项卡
+
+        Args:
+            parent_widget: 父组件引用（ManagerWidget）
+        """
+        super().__init__()
+        self.parent_widget = parent_widget
+        self.current_random_item = None
+        self._create_ui()
+
+    def _create_ui(self):
+        """创建UI"""
+        layout = QVBoxLayout(self)
+
+        # 随机获取组
+        random_group = QGroupBox("随机获取")
+        random_layout = QVBoxLayout(random_group)
+
+        random_buttons_layout = QHBoxLayout()
+        self.random_button = QPushButton("随机获取一个项目")
+        self.random_button.clicked.connect(self._on_get_random_item)
+
+        self.delete_current_button = QPushButton("删除当前显示的项目")
+        self.delete_current_button.clicked.connect(self._on_delete_current_item)
+
+        self.clear_display_button = QPushButton("清空显示")
+        self.clear_display_button.clicked.connect(self._on_clear_display)
+
+        random_buttons_layout.addWidget(self.random_button)
+        random_buttons_layout.addWidget(self.delete_current_button)
+        random_buttons_layout.addWidget(self.clear_display_button)
+        random_buttons_layout.addStretch()
+
+        # 显示区域
+        self.random_result_text = QTextEdit()
+        self.random_result_text.setMaximumHeight(150)
+        self.random_result_text.setReadOnly(True)
+
+        random_layout.addLayout(random_buttons_layout)
+        random_layout.addWidget(self.random_result_text)
+
+        # 数据表格
+        table_group = QGroupBox("JSON数据表格")
+        table_layout = QVBoxLayout(table_group)
+
+        self.data_table = QTableWidget()
+        self.data_table.setColumnCount(4)
+        self.data_table.setHorizontalHeaderLabels(["名称", "来源", "扩展名", "添加时间"])
+        header = self.data_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+
+        # 按钮行
+        table_buttons_layout = QHBoxLayout()
+        self.reload_table_button = QPushButton("刷新表格")
+        self.reload_table_button.clicked.connect(self._on_load_table_data)
+
+        self.clear_json_button = QPushButton("清空JSON文件")
+        self.clear_json_button.clicked.connect(self._on_clear_json_file)
+
+        self.open_trash_button = QPushButton("🗑️ 垃圾桶")
+        self.open_trash_button.clicked.connect(self._on_open_trash)
+
+        table_buttons_layout.addWidget(self.reload_table_button)
+        table_buttons_layout.addWidget(self.clear_json_button)
+        table_buttons_layout.addStretch()
+        table_buttons_layout.addWidget(self.open_trash_button)
+
+        table_layout.addLayout(table_buttons_layout)
+        table_layout.addWidget(self.data_table)
+
+        layout.addWidget(random_group)
+        layout.addWidget(table_group)
+
+    def _find_main_window(self):
+        """查找主窗口"""
+        widget = self.parent_widget
+        while widget:
+            if type(widget).__name__ == 'MainWindow':
+                return widget
+            widget = widget.parent()
+        return None
+
+    def _get_confirmation_setting(self):
+        """获取二次确认设置"""
+        main_window = self._find_main_window()
+        if main_window and hasattr(main_window, 'get_confirmation_setting'):
+            return main_window.get_confirmation_setting()
+        return True
+
+    def _update_undo_button_state(self):
+        """更新撤销按钮状态"""
+        main_window = self._find_main_window()
+        if main_window:
+            main_window.update_undo_button_state()
+
+    def _show_result_info(self):
+        """检查是否需要显示结果信息"""
+        main_window = self._find_main_window()
+        if main_window and hasattr(main_window, 'get_confirmation_setting'):
+            return main_window.get_confirmation_setting()
+        return True
+
+    def _on_load_table_data(self):
+        """加载表格数据"""
+        data = FileManager.load_json_data()
+        self.data_table.setRowCount(len(data))
+        for row, item in enumerate(data):
+            self.data_table.setItem(row, 0, QTableWidgetItem(str(item.get("name", ""))))
+            self.data_table.setItem(row, 1, QTableWidgetItem(str(item.get("source", ""))))
+            self.data_table.setItem(row, 2, QTableWidgetItem(str(item.get("extension", ""))))
+            self.data_table.setItem(row, 3, QTableWidgetItem(str(item.get("added_time", ""))))
+
+    def _on_get_random_item(self):
+        """随机获取项目"""
+        logger.info("随机获取项目")
+        data = FileManager.load_json_data()
+
+        if not data:
+            self.random_result_text.setPlainText("JSON文件中没有数据")
+            self.current_random_item = None
+            logger.warning("JSON文件为空，无法随机选择")
+            return
+
+        self.current_random_item = random.choice(data)
+
+        formatted_lines = []
+        for key, value in self.current_random_item.items():
+            formatted_lines.append(f"{key}: {value}")
+
+        self.random_result_text.setPlainText("\n".join(formatted_lines))
+        logger.info(f"已随机选择项目: {self.current_random_item.get('name', '未知')}")
+
+    def _on_delete_current_item(self):
+        """删除当前项目"""
+        if not self.current_random_item:
+            QMessageBox.warning(self, "警告", "请先随机获取一个项目")
+            return
+
+        confirmation_needed = self._get_confirmation_setting()
+        item_str = "\n".join([f"{k}: {v}" for k, v in self.current_random_item.items()])
+
+        if confirmation_needed:
+            reply = QMessageBox.question(
+                self, "确认删除",
+                f"确定要从JSON中删除以下项目吗？\n\n{item_str}",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+        else:
+            reply = QMessageBox.Yes
+
+        if reply == QMessageBox.Yes:
+            logger.info(f"开始删除项目: {self.current_random_item.get('name', '未知')}")
+            deleted_item = self.current_random_item.copy()
+
+            # 从数据中移除该项目
+            data = FileManager.load_json_data()
+            new_data = []
+            for item in data:
+                match = True
+                for key, value in self.current_random_item.items():
+                    if key not in item or item[key] != value:
+                        match = False
+                        break
+                if not match:
+                    new_data.append(item)
+
+            # 保存更新后的数据
+            if FileManager.save_json_data(new_data):
+                # 记录删除操作历史
+                FileManager.push_undo({
+                    "type": "delete_item",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "data": {"item": deleted_item, "json_path": str(Config.COMIC_DIR / "image_names.json")}
+                })
+                self._update_undo_button_state()
+
+                if self._show_result_info():
+                    QMessageBox.information(self, "成功", "项目已删除")
+
+                self.current_random_item = None
+                self.random_result_text.setPlainText("项目已删除")
+                self._on_load_table_data()
+                self.parent_widget.update_stats()
+                logger.info("项目删除成功")
+            else:
+                QMessageBox.critical(self, "错误", "删除失败")
+                logger.error("项目删除失败")
+
+    def _on_clear_display(self):
+        """清空显示"""
+        self.random_result_text.setPlainText("")
+        self.current_random_item = None
+
+    def _on_clear_json_file(self):
+        """清空JSON文件"""
+        data = FileManager.load_json_data()
+        if not data:
+            QMessageBox.information(self, "提示", "JSON文件已经为空")
+            return
+
+        confirmation_needed = self._get_confirmation_setting()
+
+        if confirmation_needed:
+            reply = QMessageBox.question(
+                self, "确认清空",
+                "确定要清空JSON文件中的所有数据吗？\n此操作不可撤销！",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+        else:
+            reply = QMessageBox.Yes
+
+        if reply == QMessageBox.Yes:
+            if FileManager.save_json_data([]):
+                if self._show_result_info():
+                    QMessageBox.information(self, "成功", "JSON文件已清空")
+                self._on_load_table_data()
+                self.parent_widget.update_stats()
+                logger.info("JSON文件已清空")
+            else:
+                QMessageBox.critical(self, "错误", "清空JSON文件失败")
+                logger.error("清空JSON文件失败")
+
+    def _on_open_trash(self):
+        """打开垃圾桶"""
+        from ui.trash_widget import TrashWidget
+        trash_dialog = TrashWidget(self.parent_widget)
+        trash_dialog.exec_()
+
+
+def create_data_tab(parent_widget) -> QWidget:
+    """创建数据管理选项卡（工厂函数）
+
+    Args:
+        parent_widget: 父组件引用
+
+    Returns:
+        QWidget: 创建的选项卡组件
+    """
+    return DataTabWidget(parent_widget)
