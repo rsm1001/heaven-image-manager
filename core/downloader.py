@@ -323,7 +323,7 @@ class DownloadWorker(QThread):
         with self._lock:
             for f in self._active_futures:
                 f.cancel()
-        self.wait()
+        self.wait(3000)
 
 
 class ThumbnailDownloader:
