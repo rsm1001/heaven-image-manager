@@ -6,7 +6,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSlot
 import sys
-import json
 from pathlib import Path
 from win10toast import ToastNotifier
 # 添加项目根目录到Python路径
@@ -40,19 +39,10 @@ class DownloadWidget(QWidget):
         settings_group = QGroupBox("下载设置")
         settings_layout = QFormLayout(settings_group)
         
-        # 起始ID - 从持久化配置中读取最后下载ID的下一个作为默认值
+        # 起始ID - 从 Config 统一读取（内部封装了 config.json 读取和 fallback 逻辑）
         self.start_id_spin = QSpinBox()
         self.start_id_spin.setRange(1, 999999)
-        
-        # 从配置文件中读取最后下载的ID
-        try:
-            import json
-            with open('config.json', 'r', encoding='utf-8') as f:
-                config_data = json.load(f)
-                last_downloaded = config_data.get('last_downloaded_id', Config.START_ID - 1)
-        except (FileNotFoundError, json.JSONDecodeError):
-            last_downloaded = Config.START_ID - 1  # 默认值
-        
+        last_downloaded = Config.get_last_downloaded_id()
         self.start_id_spin.setValue(last_downloaded + 1)  # 使用最后下载ID的下一个作为默认值
         
         # 数量
@@ -208,20 +198,11 @@ class DownloadWidget(QWidget):
                 # 如果我们有确切的最后成功ID
                 if last_successful_id is not None:
                     # 更新配置文件中的最后下载ID
-                    import json
-                    try:
-                        with open('config.json', 'r', encoding='utf-8') as f:
-                            config_data = json.load(f)
-                    except (FileNotFoundError, json.JSONDecodeError):
-                        config_data = {}
-                    
-                    config_data['last_downloaded_id'] = last_successful_id
-                    with open('config.json', 'w', encoding='utf-8') as f:
-                        json.dump(config_data, f, ensure_ascii=False, indent=4)
-                    
+                    Config.set_last_downloaded_id(last_successful_id)
+
                     # 更新界面上的起始ID为下一个待下载的ID
                     self.start_id_spin.setValue(last_successful_id + 1)
-                    
+
                     self.log_status(f"下次下载将从ID {last_successful_id + 1} 开始")
             
             fail_ids = result.get("fail_ids", [])
@@ -238,22 +219,7 @@ class DownloadWidget(QWidget):
                     last_downloaded_id = self.current_start_id + self.downloaded_count - 1
 
                     # 更新配置文件中的最后下载ID
-                    import json
-                    try:
-                        with open('config.json', 'r', encoding='utf-8') as f:
-                            config_data = json.load(f)
-                    except (FileNotFoundError, json.JSONDecodeError):
-                        config_data = {}
-
-                    # 为保险起见，确保我们不记录失败的ID
-                    # 可能需要更复杂的方法来确认哪些ID确实成功了
-
-                    # 这里我们需要一种更精确的方法来确定最后真正成功的ID
-                    # 由于我们无法区分进度回调中的"完成"和"成功"，
-                    # 最保险的方法是只记录确认成功的结果
-                    config_data['last_downloaded_id'] = last_downloaded_id
-                    with open('config.json', 'w', encoding='utf-8') as f:
-                        json.dump(config_data, f, ensure_ascii=False, indent=4)
+                    Config.set_last_downloaded_id(last_downloaded_id)
 
                     # 更新界面上的起始ID为下一个待下载的ID
                     self.start_id_spin.setValue(last_downloaded_id + 1)
