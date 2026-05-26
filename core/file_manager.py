@@ -224,6 +224,7 @@ class FileManager:
             # 构建新记录
             new_record = {
                 "name": image_path.stem,
+                "extension": image_path.suffix,
                 "original_path": str(image_path.relative_to(Config.COMIC_DIR)),
                 "deleted_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "file_size": file_size
@@ -235,7 +236,7 @@ class FileManager:
                 # 按删除时间排序，删除最早的
                 records.sort(key=lambda x: x.get("deleted_time", ""))
                 oldest = records.pop(0)
-                oldest_file = Config.TRASH_DIR / f"{oldest['name']}{image_path.suffix}"
+                oldest_file = Config.TRASH_DIR / f"{oldest['name']}{oldest.get('extension', '')}"
                 if oldest_file.exists():
                     oldest_file.unlink()
                     logger.info(f"自动清理最久记录: {oldest['name']}")
