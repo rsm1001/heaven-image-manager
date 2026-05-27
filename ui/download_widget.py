@@ -214,9 +214,13 @@ class DownloadWidget(QWidget):
                 # 检查是否有任何成功下载的文件
                 success_count = result.get("success_count", 0)
                 if success_count > 0 and self.current_start_id is not None:
-                    # 假设成功下载了前N个，计算最后成功下载的ID
-                    # 如果我们不知道确切的ID，我们需要依赖progress回调的current值
-                    last_downloaded_id = self.current_start_id + self.downloaded_count - 1
+                    # 优先使用 success_ids 精确计算最后成功下载的 ID
+                    success_ids = result.get("success_ids", [])
+                    if success_ids:
+                        last_downloaded_id = max(success_ids)
+                    else:
+                        # fallback：使用估算（向后兼容）
+                        last_downloaded_id = self.current_start_id + self.downloaded_count - 1
 
                     # 更新配置文件中的最后下载ID
                     Config.set_last_downloaded_id(last_downloaded_id)

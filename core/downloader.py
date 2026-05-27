@@ -127,6 +127,7 @@ class DownloadWorker(QThread):
         self._success_count = 0
         self._fail_count = 0
         self._fail_ids = []
+        self._success_ids = []
         self._skipped_ids: List[int] = []
         self._download_records: Dict[int, dict] = {}
 
@@ -137,6 +138,7 @@ class DownloadWorker(QThread):
         self._success_count = 0
         self._fail_count = 0
         self._fail_ids = []
+        self._success_ids = []
         self._skipped_ids = []
         self._active_futures = []
         self._download_records = DownloadRecord.load_records()
@@ -199,6 +201,7 @@ class DownloadWorker(QThread):
                     self._completed_count += 1
                     if success:
                         self._success_count += 1
+                        self._success_ids.append(img_id)
                         self._download_records[img_id] = {
                             "status": "success",
                             "downloaded_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -227,6 +230,7 @@ class DownloadWorker(QThread):
             "success_count": self._success_count,
             "fail_count": self._fail_count,
             "fail_ids": self._fail_ids,
+            "success_ids": self._success_ids,
             "total": self.count,
             "cancelled": self.cancelled,
             "skipped": self._skipped_ids
