@@ -1,6 +1,7 @@
 """配置管理模块"""
 import os
 import json
+import threading
 from pathlib import Path
 
 
@@ -52,6 +53,9 @@ class Config:
     # config.json 路径
     CONFIG_FILE = BASE_DIR / "config.json"
 
+    # 线程安全锁
+    _lock = threading.RLock()
+
     @classmethod
     def ensure_directories(cls):
         """确保必要目录存在"""
@@ -62,23 +66,25 @@ class Config:
     @classmethod
     def get_last_downloaded_id(cls) -> int:
         """从 config.json 读取 last_downloaded_id，失败时返回默认值"""
-        try:
-            with open(cls.CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f).get('last_downloaded_id', cls.DEFAULT_LAST_DOWNLOADED_ID)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return cls.DEFAULT_LAST_DOWNLOADED_ID
+        with cls._lock:
+            try:
+                with open(cls.CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f).get('last_downloaded_id', cls.DEFAULT_LAST_DOWNLOADED_ID)
+            except (FileNotFoundError, json.JSONDecodeError):
+                return cls.DEFAULT_LAST_DOWNLOADED_ID
 
     @classmethod
     def set_last_downloaded_id(cls, value: int):
         """写入 config.json 的 last_downloaded_id"""
-        try:
-            with open(cls.CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config_data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            config_data = {}
-        config_data['last_downloaded_id'] = value
-        with open(cls.CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(config_data, f, ensure_ascii=False, indent=4)
+        with cls._lock:
+            try:
+                with open(cls.CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                config_data = {}
+            config_data['last_downloaded_id'] = value
+            with open(cls.CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=4)
 
 
 # 确保目录存在
