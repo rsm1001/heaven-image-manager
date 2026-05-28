@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
 
     def update_undo_button_state(self):
         """更新撤销按钮状态"""
-        has_history = len(self.file_manager.undo_stack) > 0
+        has_history = FileManager.get_undo_stack_size() > 0
         self.undo_button.setEnabled(has_history)
 
     def on_undo(self):

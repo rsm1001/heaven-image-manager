@@ -1,187 +1,90 @@
-"""文件管理模块"""
+"""文件管理模块 - 核心文件操作功能"""
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
-import json
+from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime
-import sys
-# 添加项目根目录到Python路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from utils.logger import logger
 from utils.config import Config
+from core.undo_manager import UndoManager, UndoOperationType
+from core.trash_manager import TrashManager
+from core.json_storage import JsonStorage
 
 
 class FileManager:
-    """文件管理类"""
-
-    # 操作历史栈（会话级，不持久化）
-    undo_stack: List[dict] = []
+    """文件管理类 - 核心功能模块"""
 
     @staticmethod
     def ensure_directories() -> None:
         """确保必要的目录存在"""
-        Config.COMIC_DIR.mkdir(parents=True, exist_ok=True)
-        Config.TARGET_DIR.mkdir(parents=True, exist_ok=True)
+        Config.ensure_directories()
+        logger.info("目录初始化完成")
 
-    # ==================== 操作历史与撤销 ====================
+    # ==================== Undo/Redo 操作 ====================
 
     @classmethod
     def push_undo(cls, record: dict) -> None:
-        """记录操作到历史栈"""
-        cls.undo_stack.append(record)
-        logger.info(f"操作已记录: {record['type']}")
+        """记录操作到历史栈（委托给UndoManager）"""
+        UndoManager.push(record)
 
     @classmethod
     def undo(cls) -> Tuple[bool, str, Optional[dict]]:
-        """执行撤销操作（逆序）
-
-        Returns:
-            Tuple[bool, str, Optional[dict]]: (是否成功, 消息, 被撤销的记录)
-        """
-        if not cls.undo_stack:
-            return False, "没有可撤销的操作", None
-
-        record = cls.undo_stack.pop()
-        op_type = record.get("type")
-        data = record.get("data", {})
-
-        try:
-            if op_type == "move":
-                result = cls._undo_move(data)
-                return result[0], result[1], record
-            elif op_type == "delete":
-                result = cls._undo_delete(data)
-                return result[0], result[1], record
-            elif op_type == "extract":
-                result = cls._undo_extract(data)
-                return result[0], result[1], record
-            elif op_type == "delete_item":
-                result = cls._undo_delete_item(data)
-                return result[0], result[1], record
-            else:
-                logger.error(f"未知的操作类型: {op_type}")
-                return False, f"未知的操作类型: {op_type}", record
-        except Exception as e:
-            logger.error(f"撤销操作失败: {str(e)}")
-            return False, f"撤销失败: {str(e)}", None
-
-    @classmethod
-    def _undo_move(cls, data: dict) -> Tuple[bool, str]:
-        """撤销移动操作"""
-        source = data.get("source")
-        target = data.get("target")
-
-        if not source or not target:
-            return False, "移动记录数据不完整"
-
-        source_path = Path(source) if isinstance(source, str) else source
-        target_path = Path(target) if isinstance(target, str) else target
-
-        if not target_path.exists():
-            return False, f"文件已被移动或删除: {target_path.name}"
-
-        if source_path.exists():
-            counter = 1
-            while source_path.exists():
-                source_path = target_path.parent / f"{source_path.stem}_{counter}{target_path.suffix}"
-                counter += 1
-
-        shutil.move(str(target_path), str(source_path))
-        logger.info(f"撤销移动: {target_path} -> {source_path}")
-        return True, f"已撤销移动: {source_path.name}"
-
-    @classmethod
-    def _undo_delete(cls, data: dict) -> Tuple[bool, str]:
-        """撤销删除操作"""
-        name = data.get("name")
-
-        if not name:
-            return False, "删除记录数据不完整"
-
-        success, msg = cls.restore_from_trash(name)
-        return success, f"已撤销删除: {name}" if success else msg
-
-    @classmethod
-    def _undo_extract(cls, data: dict) -> Tuple[bool, str]:
-        """撤销提取操作"""
-        added_items = data.get("added_items", [])
-        json_path = data.get("json_path")
-
-        if not added_items:
-            return False, "没有可撤销的提取项"
-
-        if json_path is None:
-            json_path = Config.COMIC_DIR / "image_names.json"
-        else:
-            json_path = Path(json_path) if isinstance(json_path, str) else json_path
-
-        existing_data = cls.load_json_data(json_path)
-        added_names = {item.get("name") for item in added_items}
-        updated_data = [item for item in existing_data if item.get("name") not in added_names]
-
-        cls.save_json_data(updated_data, json_path)
-        logger.info(f"撤销提取: 移除了 {len(added_items)} 项")
-        return True, f"已撤销提取: 移除了 {len(added_items)} 项"
-
-    @classmethod
-    def _undo_delete_item(cls, data: dict) -> Tuple[bool, str]:
-        """撤销删除JSON项操作"""
-        item = data.get("item")
-        json_path = data.get("json_path")
-
-        if not item:
-            return False, "没有可撤销的项"
-
-        if json_path is None:
-            json_path = Config.COMIC_DIR / "image_names.json"
-        else:
-            json_path = Path(json_path) if isinstance(json_path, str) else json_path
-
-        existing_data = cls.load_json_data(json_path)
-        existing_data.append(item)
-        cls.save_json_data(existing_data, json_path)
-        logger.info(f"撤销删除项: {item.get('name')}")
-        return True, f"已撤销删除项: {item.get('name')}"
+        """执行撤销操作（委托给UndoManager）"""
+        return UndoManager.undo()
 
     @classmethod
     def clear_undo_stack(cls) -> None:
-        """清空操作历史（通常不需要调用）"""
-        cls.undo_stack.clear()
+        """清空操作历史（委托给UndoManager）"""
+        UndoManager.clear()
+
+    @classmethod
+    def get_undo_stack_size(cls) -> int:
+        """获取撤销栈大小"""
+        return UndoManager.size()
+
+    # ==================== 图片文件操作 ====================
 
     @staticmethod
     def get_image_files(directory: Optional[Path] = None) -> List[Path]:
-        """获取图片文件列表（按名称排序）"""
+        """获取图片文件列表（按名称排序）
+
+        Args:
+            directory: 目录路径，默认使用配置中的漫画目录
+
+        Returns:
+            图片文件路径列表
+        """
         if directory is None:
             directory = Config.COMIC_DIR
-        
+
         image_files = []
-        
+
         if directory.exists():
             for ext in Config.IMAGE_EXTENSIONS:
-                # 同时匹配小写和大写扩展名
                 image_files.extend(directory.glob(f"*{ext}"))
                 image_files.extend(directory.glob(f"*{ext.upper()}"))
-        
+
         # 去重：使用文件名的绝对路径作为键来去重
         unique_files = []
         seen = set()
-        
+
         for file_path in image_files:
-            # 使用文件的绝对路径作为唯一标识
             file_key = os.path.normcase(os.path.abspath(file_path))
             if file_key not in seen:
                 seen.add(file_key)
                 unique_files.append(file_path)
-        
+
         # 按文件名排序
         return sorted(unique_files, key=lambda x: x.name.lower())
 
     @staticmethod
     def move_image(image_path: Path, target_dir: Optional[Path] = None) -> Tuple[bool, str, Optional[Path]]:
         """移动图片到目标目录
+
+        Args:
+            image_path: 图片路径
+            target_dir: 目标目录，默认使用配置中的目标目录
 
         Returns:
             Tuple[bool, str, Optional[Path]]: (是否成功, 消息, 实际目标路径)
@@ -205,234 +108,107 @@ class FileManager:
                 counter += 1
 
             shutil.move(str(image_path), str(target_path))
+
+            # 记录撤销操作
+            FileManager.push_undo({
+                "type": UndoOperationType.MOVE,
+                "data": {"source": str(image_path), "target": str(target_path)}
+            })
+
             logger.info(f"Moved image from {image_path} to {target_path}")
             return True, f"已移动到: {target_path.name}", target_path
         except Exception as e:
-            logger.error(f"Failed to move image {image_path}: {str(e)}")
-            return False, f"移动失败: {str(e)}", None
+            logger.error(f"Failed to move image {image_path}: {e}")
+            return False, f"移动失败: {e}", None
 
     @staticmethod
     def delete_image(image_path: Path) -> Tuple[bool, str]:
-        """删除图片（仅保留到垃圾桶）"""
+        """删除图片（移入垃圾桶）
+
+        Args:
+            image_path: 图片路径
+
+        Returns:
+            Tuple[bool, str]: (是否成功, 消息)
+        """
         try:
-            # 获取文件大小
-            file_size = image_path.stat().st_size
-            
-            # 读取现有记录
-            records = FileManager._load_trash_records()
-            
-            # 构建新记录
-            new_record = {
-                "name": image_path.stem,
-                "extension": image_path.suffix,
-                "original_path": str(image_path.relative_to(Config.COMIC_DIR)),
-                "deleted_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "file_size": file_size
-            }
-            records.append(new_record)
-            
-            # 超出数量限制时删除最久的
-            while len(records) > Config.MAX_TRASH_COUNT:
-                # 按删除时间排序，删除最早的
-                records.sort(key=lambda x: x.get("deleted_time", ""))
-                oldest = records.pop(0)
-                oldest_file = Config.TRASH_DIR / f"{oldest['name']}{oldest.get('extension', '')}"
-                if oldest_file.exists():
-                    oldest_file.unlink()
-                    logger.info(f"自动清理最久记录: {oldest['name']}")
-            
-            # 保存记录
-            FileManager._save_trash_records(records)
-            
-            # 移动文件到垃圾桶目录
-            target_path = Config.TRASH_DIR / image_path.name
-            counter = 1
-            while target_path.exists():
-                target_path = Config.TRASH_DIR / f"{image_path.stem}_{counter}{image_path.suffix}"
-                counter += 1
-            
-            shutil.move(str(image_path), str(target_path))
-            logger.info(f"图片已移入垃圾桶: {image_path} -> {target_path}")
-            return True, "已移入垃圾桶"
+            name = image_path.stem
+            success, msg = TrashManager.add_to_trash(image_path)
+
+            if success:
+                # 记录撤销操作
+                FileManager.push_undo({
+                    "type": UndoOperationType.DELETE,
+                    "data": {"name": name}
+                })
+
+            return success, msg
         except Exception as e:
-            logger.error(f"Failed to delete image {image_path}: {str(e)}")
-            return False, f"删除失败: {str(e)}"
-    
-    @staticmethod
-    def _load_trash_records() -> List[dict]:
-        """加载垃圾桶记录"""
-        if not Config.TRASH_RECORD_FILE.exists():
-            return []
-        try:
-            with open(Config.TRASH_RECORD_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load trash records: {str(e)}")
-            return []
-    
-    @staticmethod
-    def _save_trash_records(records: List[dict]) -> bool:
-        """保存垃圾桶记录"""
-        try:
-            with open(Config.TRASH_RECORD_FILE, 'w', encoding='utf-8') as f:
-                json.dump(records, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save trash records: {str(e)}")
-            return False
-    
+            logger.error(f"Failed to delete image {image_path}: {e}")
+            return False, f"删除失败: {e}"
+
+    # ==================== 垃圾桶操作 ====================
+
     @staticmethod
     def get_trash_records() -> List[dict]:
         """获取所有垃圾桶记录"""
-        return FileManager._load_trash_records()
-    
+        return TrashManager.get_all_records()
+
     @staticmethod
-    def restore_from_trash(name: str, original_suffix: str = "") -> Tuple[bool, str]:
+    def restore_from_trash(name: str) -> Tuple[bool, str]:
         """从垃圾桶恢复图片"""
-        try:
-            records = FileManager._load_trash_records()
-            
-            # 查找对应记录
-            target_record = None
-            for i, record in enumerate(records):
-                if record.get("name") == name:
-                    target_record = record
-                    records.pop(i)
-                    break
-            
-            if not target_record:
-                return False, "记录不存在"
-            
-            # 找到垃圾桶中的文件
-            trash_file = None
-            for ext in Config.IMAGE_EXTENSIONS:
-                candidate = Config.TRASH_DIR / f"{name}{ext}"
-                if candidate.exists():
-                    trash_file = candidate
-                    break
-            
-            if not trash_file:
-                return False, f"找不到文件: {name}"
-            
-            # 恢复到原始位置
-            original_path = Config.COMIC_DIR / target_record.get("original_path", name)
-            original_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # 处理重名
-            target_path = original_path
-            counter = 1
-            while target_path.exists():
-                stem = original_path.stem
-                parent = original_path.parent
-                target_path = parent / f"{stem}_{counter}{original_path.suffix}"
-                counter += 1
-            
-            shutil.move(str(trash_file), str(target_path))
-            
-            # 保存更新后的记录
-            FileManager._save_trash_records(records)
-            
-            logger.info(f"已恢复图片: {name} -> {target_path}")
-            return True, f"已恢复: {target_path.name}"
-        except Exception as e:
-            logger.error(f"Failed to restore from trash: {str(e)}")
-            return False, f"恢复失败: {str(e)}"
-    
+        return TrashManager.restore(name)
+
     @staticmethod
     def permanent_delete(name: str) -> Tuple[bool, str]:
         """永久删除图片"""
-        try:
-            records = FileManager._load_trash_records()
-            
-            # 查找对应记录
-            target_record = None
-            for i, record in enumerate(records):
-                if record.get("name") == name:
-                    target_record = record
-                    records.pop(i)
-                    break
-            
-            if not target_record:
-                return False, "记录不存在"
-            
-            # 删除物理文件
-            for ext in Config.IMAGE_EXTENSIONS:
-                trash_file = Config.TRASH_DIR / f"{name}{ext}"
-                if trash_file.exists():
-                    trash_file.unlink()
-                    logger.info(f"永久删除: {trash_file}")
-                    break
-            
-            # 保存更新后的记录
-            FileManager._save_trash_records(records)
-            
-            return True, "已永久删除"
-        except Exception as e:
-            logger.error(f"Failed to permanent delete: {str(e)}")
-            return False, f"永久删除失败: {str(e)}"
-    
+        return TrashManager.permanent_delete(name)
+
     @staticmethod
     def empty_trash() -> Tuple[bool, str]:
         """清空垃圾桶"""
-        try:
-            records = FileManager._load_trash_records()
-            
-            # 删除所有物理文件
-            for record in records:
-                name = record.get("name")
-                for ext in Config.IMAGE_EXTENSIONS:
-                    trash_file = Config.TRASH_DIR / f"{name}{ext}"
-                    if trash_file.exists():
-                        trash_file.unlink()
-            
-            # 清空记录
-            FileManager._save_trash_records([])
-            
-            logger.info("垃圾桶已清空")
-            return True, "垃圾桶已清空"
-        except Exception as e:
-            logger.error(f"Failed to empty trash: {str(e)}")
-            return False, f"清空失败: {str(e)}"
+        return TrashManager.empty()
+
+    # ==================== JSON数据操作 ====================
 
     @staticmethod
     def load_json_data(json_path: Optional[Path] = None) -> List[dict]:
-        """加载JSON数据"""
+        """加载JSON数据
+
+        Args:
+            json_path: JSON文件路径，默认使用image_names.json
+
+        Returns:
+            JSON数据列表
+        """
         if json_path is None:
             json_path = Config.COMIC_DIR / "image_names.json"
-        
-        if not json_path.exists():
-            return []
-        
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                logger.info(f"Loaded {len(data)} items from {json_path}")
-                return data
-        except Exception as e:
-            logger.error(f"Failed to read JSON file {json_path}: {str(e)}")
-            return []
+        return JsonStorage.load(json_path)
 
     @staticmethod
     def save_json_data(data: List[dict], json_path: Optional[Path] = None) -> bool:
-        """保存JSON数据"""
+        """保存JSON数据
+
+        Args:
+            data: 要保存的数据
+            json_path: JSON文件路径，默认使用image_names.json
+
+        Returns:
+            是否保存成功
+        """
         if json_path is None:
             json_path = Config.COMIC_DIR / "image_names.json"
-        
-        try:
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info(f"Saved {len(data)} items to {json_path}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save JSON file {json_path}: {str(e)}")
-            return False
+        return JsonStorage.save(data, json_path)
+
+    # ==================== 目录提取操作 ====================
 
     @staticmethod
-    def extract_image_names_from_directory(source_dir: Path,
-                                         append_mode: bool = True,
-                                         delete_after_extract: bool = False) -> dict:
-        """
-        从指定目录提取图片名称
+    def extract_image_names_from_directory(
+        source_dir: Path,
+        append_mode: bool = True,
+        delete_after_extract: bool = False
+    ) -> Dict[str, Any]:
+        """从指定目录提取图片名称
 
         Args:
             source_dir: 源图片目录路径
@@ -445,116 +221,92 @@ class FileManager:
         try:
             if not source_dir.exists():
                 return {"success": False, "message": f"目录不存在: {source_dir}"}
-            
+
             if not source_dir.is_dir():
                 return {"success": False, "message": f"路径不是目录: {source_dir}"}
-            
-            # 支持的图片格式
-            image_extensions = Config.IMAGE_EXTENSIONS
-            
+
             # 获取所有图片文件
+            image_extensions = Config.IMAGE_EXTENSIONS
             image_files = []
             for file_path in source_dir.iterdir():
                 if file_path.is_file() and file_path.suffix.lower() in image_extensions:
                     image_files.append(file_path)
-            
+
             logger.info(f"Found {len(image_files)} image files in {source_dir}")
-            
+
             if not image_files:
                 return {"success": False, "message": "未找到图片文件"}
-            
+
             # 提取文件名（不含扩展名）
             image_names = [file.stem for file in image_files]
-            
+
             # 准备新项目
             new_items = []
             for name in image_names:
                 new_items.append({
-                    "name": name, 
+                    "name": name,
                     "source": str(source_dir.relative_to(Config.BASE_DIR)),
                     "extension": Path(name).suffix if Path(name).suffix else "",
                     "added_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 })
-            
+
             # 处理JSON数据
             json_path = Config.COMIC_DIR / "image_names.json"
-            existing_data = FileManager.load_json_data(json_path)
-            
-            if append_mode:
-                # 追加模式：去重后添加
-                existing_names = {item.get('name') for item in existing_data if isinstance(item, dict)}
-                
-                filtered_new_items = []
-                for item in new_items:
-                    if item["name"] not in existing_names:
-                        filtered_new_items.append(item)
-                    else:
-                        logger.info(f"Skipping duplicate: {item['name']}")
-                
-                updated_data = existing_data + filtered_new_items
-                logger.info(f"Append mode: Added {len(filtered_new_items)} new items, skipped {len(new_items) - len(filtered_new_items)} duplicates")
-            else:
-                # 覆盖模式：清空原有数据
-                updated_data = new_items
-                logger.info(f"Overwrite mode: Added {len(new_items)} new items, cleared existing data")
-            
-            # 保存到JSON
-            save_success = FileManager.save_json_data(updated_data, json_path)
-            if not save_success:
-                return {"success": False, "message": "保存JSON失败"}
+            result = JsonStorage.append_items(json_path, new_items, append_mode)
+
+            # 记录撤销操作
+            if result.get("success") and result.get("added_items"):
+                FileManager.push_undo({
+                    "type": UndoOperationType.EXTRACT,
+                    "data": {
+                        "added_items": result["added_items"],
+                        "json_path": str(json_path)
+                    }
+                })
 
             # 提取后直接删除源文件（可选）
             deleted_count = 0
-            if delete_after_extract:
+            if delete_after_extract and result.get("success"):
+                added_names = {item.get('name') for item in new_items}
                 for file_path in image_files:
-                    # 跳过已在追加模式下被去重的文件（它们的名字已在JSON中）
-                    if file_path.stem in [item.get('name') for item in new_items]:
+                    if file_path.stem in added_names:
                         try:
                             file_path.unlink()
                             deleted_count += 1
                             logger.info(f"提取后已直接删除源文件: {file_path.name}")
                         except Exception as e:
-                            logger.error(f"删除源文件失败 {file_path.name}: {str(e)}")
+                            logger.error(f"删除源文件失败 {file_path.name}: {e}")
 
-            result_msg = f"成功提取 {len(new_items)} 个图片名称"
-            if append_mode:
-                result_msg += f"（追加模式）"
-            else:
-                result_msg += f"（覆盖模式）"
-            if delete_after_extract and deleted_count > 0:
-                result_msg += f"，已直接删除 {deleted_count} 个源文件"
+            result["deleted_count"] = deleted_count
+            return result
 
-            return {
-                "success": True,
-                "message": result_msg,
-                "added_count": len(new_items),
-                "added_items": new_items,
-                "total_count": len(updated_data),
-                "deleted_count": deleted_count,
-                "mode": "append" if append_mode else "overwrite"
-            }
-            
         except Exception as e:
-            logger.error(f"Error processing directory {source_dir}: {str(e)}")
-            return {"success": False, "message": f"处理过程中发生错误: {str(e)}"}
+            logger.error(f"Error processing directory {source_dir}: {e}")
+            return {"success": False, "message": f"处理过程中发生错误: {e}"}
+
+    # ==================== 统计操作 ====================
 
     @staticmethod
     def get_stats() -> dict:
-        """获取统计数据"""
+        """获取统计数据
+
+        Returns:
+            统计信息字典
+        """
         json_path = Config.COMIC_DIR / "image_names.json"
-        
+
         stats = {
             "file_exists": json_path.exists(),
             "item_count": 0,
             "json_path": str(json_path)
         }
-        
+
         if json_path.exists():
             try:
                 file_size = json_path.stat().st_size
                 stats["file_size_kb"] = file_size / 1024
                 stats["file_size_mb"] = file_size / (1024 * 1024)
-                
+
                 # 获取添加时间范围
                 data = FileManager.load_json_data(json_path)
                 if data:
@@ -562,10 +314,10 @@ class FileManager:
                     if times:
                         stats["first_added"] = min(times)
                         stats["last_added"] = max(times)
-                        
+
                 stats["item_count"] = len(data)
             except:
                 stats["file_size_kb"] = 0
                 stats["file_size_mb"] = 0
-        
+
         return stats
