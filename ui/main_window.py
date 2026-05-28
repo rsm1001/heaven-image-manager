@@ -282,16 +282,26 @@ class MainWindow(QMainWindow):
 
                 # 对于 move 操作使用 source，对于 delete 操作使用 original_path
                 op_data = last_op.get("data", {})
-                restored_source = op_data.get("source") or op_data.get("original_path")
+                op_type = last_op.get("type")
 
                 # 定位到被撤回的文件
                 found = False
-                if restored_source:
-                    for i, f in enumerate(self.preview_widget.image_files):
-                        if str(f) == restored_source:
-                            self.preview_widget.current_index = i
-                            found = True
-                            break
+                if op_type == "move":
+                    restored_source = op_data.get("source")
+                    if restored_source:
+                        for i, f in enumerate(self.preview_widget.image_files):
+                            if str(f) == restored_source:
+                                self.preview_widget.current_index = i
+                                found = True
+                                break
+                elif op_type == "delete":
+                    restored_source = op_data.get("original_path")
+                    if restored_source:
+                        for i, f in enumerate(self.preview_widget.image_files):
+                            if str(f.relative_to(Config.COMIC_DIR)) == restored_source:
+                                self.preview_widget.current_index = i
+                                found = True
+                                break
 
                 if not found:
                     self.preview_widget.current_index = 0

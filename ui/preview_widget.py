@@ -177,8 +177,7 @@ class PreviewWidget(QWidget):
 
         self.update_counter()
         self.update_controls()
-        self.update_controls()
-    
+
     def show_next_image(self):
         """显示下一张图片"""
         if not self.image_files:
@@ -368,7 +367,7 @@ class PreviewWidget(QWidget):
                 FileManager.push_undo({
                     "type": "delete",
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "data": {"name": image_path.stem, "original_path": str(image_path)}
+                    "data": {"name": image_path.stem, "original_path": str(image_path.relative_to(Config.COMIC_DIR))}
                 })
                 if main_window:
                     main_window.update_undo_button_state()
