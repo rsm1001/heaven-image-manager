@@ -1,9 +1,10 @@
 """数据管理选项卡模块"""
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
-    QPushButton, QTextEdit, QTableWidget, QTableWidgetItem,
+    QPushButton, QTextEdit, QTableWidget,
     QHeaderView, QMessageBox
 )
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from pathlib import Path
 import sys
@@ -15,8 +16,17 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config import Config
 from core.file_manager import FileManager
+from ui.sortable_item import SortableTableItem
 
 logger = logging.getLogger("HeavenComic")
+
+# 数据表的列定义: (列索引, sort_kind)
+_TABLE_COLUMNS = [
+    (0, "str"),       # 名称
+    (1, "str"),       # 来源
+    (2, "str"),       # 扩展名
+    (3, "datetime"),  # 添加时间(YYYY-MM-DD HH:MM:SS,文本序即时间序)
+]
 
 
 class DataTabWidget(QWidget):
@@ -69,10 +79,19 @@ class DataTabWidget(QWidget):
         table_layout = QVBoxLayout(table_group)
 
         self.data_table = QTableWidget()
-        self.data_table.setColumnCount(4)
+        self.data_table.setColumnCount(len(_TABLE_COLUMNS))
         self.data_table.setHorizontalHeaderLabels(["名称", "来源", "扩展名", "添加时间"])
         header = self.data_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+
+        # 排序状态:默认按"添加时间"倒序,最符合直觉
+        self._sort_col = 3
+        self._sort_order = Qt.DescendingOrder
+        self.data_table.setSortingEnabled(True)
+        self.data_table.sortByColumn(self._sort_col, self._sort_order)
+        header.sortIndicatorChanged.connect(self._on_sort_changed)
 
         # 按钮行
         table_buttons_layout = QHBoxLayout()
@@ -128,12 +147,35 @@ class DataTabWidget(QWidget):
     def _on_load_table_data(self):
         """加载表格数据"""
         data = FileManager.load_json_data()
-        self.data_table.setRowCount(len(data))
-        for row, item in enumerate(data):
-            self.data_table.setItem(row, 0, QTableWidgetItem(str(item.get("name", ""))))
-            self.data_table.setItem(row, 1, QTableWidgetItem(str(item.get("source", ""))))
-            self.data_table.setItem(row, 2, QTableWidgetItem(str(item.get("extension", ""))))
-            self.data_table.setItem(row, 3, QTableWidgetItem(str(item.get("added_time", ""))))
+
+        # 灌数据期间关闭排序,避免每 setItem 一次就触发一次重排
+        self.data_table.setSortingEnabled(False)
+        try:
+            self.data_table.setRowCount(len(data))
+            for row, item in enumerate(data):
+                for col_index, sort_kind in _TABLE_COLUMNS:
+                    field = item.get({
+                        0: "name",
+                        1: "source",
+                        2: "extension",
+                        3: "added_time",
+                    }[col_index], "")
+                    self.data_table.setItem(
+                        row, col_index,
+                        SortableTableItem(str(field), sort_kind=sort_kind),
+                    )
+        finally:
+            self.data_table.setSortingEnabled(True)
+
+        # 还原用户当前选择的排序方式
+        self.data_table.sortByColumn(self._sort_col, self._sort_order)
+
+    def _on_sort_changed(self, column: int, order):
+        """用户点击表头时记录当前排序方式,刷新后能继续保留"""
+        if column < 0:
+            return
+        self._sort_col = column
+        self._sort_order = order
 
     def _on_get_random_item(self):
         """随机获取项目"""

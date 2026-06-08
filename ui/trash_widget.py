@@ -1,6 +1,6 @@
 """垃圾桶组件"""
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QPushButton, QLabel, QHeaderView, QMessageBox, QGroupBox, QDialog
 )
 from PyQt5.QtCore import Qt
@@ -14,6 +14,15 @@ sys.path.insert(0, str(project_root))
 from core.file_manager import FileManager
 from utils.config import Config
 from utils.logger import logger
+from ui.sortable_item import SortableTableItem
+
+# 垃圾桶表的列定义: (列索引, sort_kind)
+_TRASH_COLUMNS = [
+    (0, "str"),       # 名称
+    (1, "str"),       # 原始位置
+    (2, "datetime"),  # 删除时间
+    (3, "filesize"),  # 文件大小(显示成 "1.5 KB" / "2.3 MB",字典序会排错)
+]
 
 
 class TrashWidget(QDialog):
@@ -40,7 +49,7 @@ class TrashWidget(QDialog):
         table_layout = QVBoxLayout(table_group)
         
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
+        self.table.setColumnCount(len(_TRASH_COLUMNS))
         self.table.setHorizontalHeaderLabels(["名称", "原始位置", "删除时间", "文件大小"])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Fixed)
@@ -53,6 +62,15 @@ class TrashWidget(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.MultiSelection)
         self.table.itemSelectionChanged.connect(self.update_button_states)
+
+        # 启用列点击排序,默认按删除时间倒序
+        self._sort_col = 2
+        self._sort_order = Qt.DescendingOrder
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(self._sort_col, self._sort_order)
+        header.sortIndicatorChanged.connect(self._on_sort_changed)
         
         table_layout.addWidget(self.table)
         
@@ -89,35 +107,55 @@ class TrashWidget(QDialog):
     def load_data(self):
         """加载数据"""
         records = FileManager.get_trash_records()
-        
-        self.table.setRowCount(len(records))
-        
-        for row, record in enumerate(records):
-            name = record.get("name", "")
-            original_path = record.get("original_path", "")
-            deleted_time = record.get("deleted_time", "")
-            file_size = record.get("file_size", 0)
-            
-            # 格式化文件大小
-            if file_size:
-                size_str = self._format_size(file_size)
-            else:
-                size_str = "--"
-            
-            self.table.setItem(row, 0, QTableWidgetItem(name))
-            self.table.setItem(row, 1, QTableWidgetItem(original_path))
-            self.table.setItem(row, 2, QTableWidgetItem(deleted_time))
-            self.table.setItem(row, 3, QTableWidgetItem(size_str))
-        
+
+        # 灌数据期间关闭排序,避免每 setItem 一次就触发一次重排
+        self.table.setSortingEnabled(False)
+        try:
+            self.table.setRowCount(len(records))
+
+            for row, record in enumerate(records):
+                name = record.get("name", "")
+                original_path = record.get("original_path", "")
+                deleted_time = record.get("deleted_time", "")
+                file_size = record.get("file_size", 0)
+
+                # 格式化文件大小
+                if file_size:
+                    size_str = self._format_size(file_size)
+                else:
+                    size_str = "--"
+
+                # 记录原始字节数,供 filesize 排序使用
+                self.table.setItem(row, 0, SortableTableItem(name, sort_kind="str"))
+                self.table.setItem(row, 1, SortableTableItem(original_path, sort_kind="str"))
+                self.table.setItem(row, 2, SortableTableItem(deleted_time, sort_kind="datetime"))
+                self.table.setItem(
+                    row, 3,
+                    SortableTableItem(size_str, sort_kind="filesize",
+                                       sort_value=int(file_size or 0)),
+                )
+        finally:
+            self.table.setSortingEnabled(True)
+
+        # 还原用户选择的排序方式
+        self.table.sortByColumn(self._sort_col, self._sort_order)
+
         # 更新统计
         total_size = sum(r.get("file_size", 0) for r in records)
         self.stats_label.setText(
             f"共 {len(records)} 张图片，总计 {self._format_size(total_size)}，"
             f"最大容量 {Config.MAX_TRASH_COUNT} 张"
         )
-        
+
         self.update_button_states()
         logger.info(f"TrashWidget loaded {len(records)} records")
+
+    def _on_sort_changed(self, column: int, order):
+        """记录用户选择的排序方式,刷新后能继续保留"""
+        if column < 0:
+            return
+        self._sort_col = column
+        self._sort_order = order
     
     def _format_size(self, size: int) -> str:
         """格式化文件大小"""
