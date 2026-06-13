@@ -491,5 +491,12 @@
     "original_path": "9254.jpg",
     "deleted_time": "2026-05-26 15:34:39",
     "file_size": 47352
+  },
+  {
+    "name": "9001",
+    "extension": ".jpg",
+    "original_path": "9001.jpg",
+    "deleted_time": "2026-06-14 03:12:29",
+    "file_size": 631
   }
 ]

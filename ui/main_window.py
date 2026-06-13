@@ -21,6 +21,7 @@ from utils.logger import logger
 from .preview_widget import PreviewWidget
 from .manager_widget import ManagerWidget
 from .download_widget import DownloadWidget
+from .test_runner_dialog import TestRunnerDialog
 
 
 class LogViewerDialog(QDialog):
@@ -121,8 +122,18 @@ class MainWindow(QMainWindow):
         self.undo_button.setEnabled(False)
         self.undo_button.clicked.connect(self.on_undo)
 
+        self.test_button = QPushButton("🧪 测试")
+        self.test_button.setFixedSize(80, 24)
+        self.test_button.setStyleSheet("padding: 0; margin: 0;")
+        self.test_button.setToolTip("运行项目测试套件")
+        font_t = self.test_button.font()
+        font_t.setPointSize(8)
+        self.test_button.setFont(font_t)
+        self.test_button.clicked.connect(self.open_test_runner)
+
         button_column_layout.addWidget(self.open_101_button)
         button_column_layout.addWidget(self.undo_button)
+        button_column_layout.addWidget(self.test_button)
         button_column_layout.addStretch()
 
         # 创建选项卡部件
@@ -212,6 +223,11 @@ class MainWindow(QMainWindow):
         refresh_action = QAction('刷新', self)
         refresh_action.triggered.connect(self.refresh_all)
         tools_menu.addAction(refresh_action)
+
+        test_action = QAction('运行测试', self)
+        test_action.setShortcut('Ctrl+T')
+        test_action.triggered.connect(self.open_test_runner)
+        tools_menu.addAction(test_action)
 
         # 添加二次确认选项
         self.confirm_action = QAction('二次确认', self, checkable=True)
@@ -323,6 +339,11 @@ class MainWindow(QMainWindow):
             folder_path.mkdir(parents=True, exist_ok=True)
         os.startfile(str(folder_path))
         self.status_bar.showMessage(f"已打开: {folder_path}")
+
+    def open_test_runner(self):
+        """打开测试运行对话框"""
+        dialog = TestRunnerDialog(project_root, self)
+        dialog.exec_()
 
     def on_tab_changed(self, index):
         """选项卡改变时的处理"""

@@ -1,0 +1,16 @@
+# 运行时依赖（PyInstaller 打包用）
+PyQt5>=5.15.0
+Pillow>=8.0.0
+requests>=2.25.0
+urllib3>=1.26.0
+colorama>=0.4.4
+win10toast>=0.6
+
+# ---- 测试 / CI 依赖（开发与 CI 装）----
+# Python 3.8+ 兼容
+pytest>=7.0
+pytest-qt>=4.4
+pytest-cov>=4.0
+pytest-mock>=3.10
+responses>=0.23
+freezegun>=1.2
