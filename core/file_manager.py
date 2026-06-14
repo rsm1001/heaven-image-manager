@@ -65,12 +65,14 @@ class FileManager:
                 image_files.extend(directory.glob(f"*{ext}"))
                 image_files.extend(directory.glob(f"*{ext.upper()}"))
 
-        # 去重：使用文件名的绝对路径作为键来去重
+        # 去重：使用绝对路径（忽略大小写）作为键
+        # .lower() 是为了让 POSIX（Linux）也按大小写不敏感比较，
+        # 否则 os.path.normcase 在 Linux 上是 no-op，会把 x.jpg 和 X.JPG 当成两个文件。
         unique_files = []
         seen = set()
 
         for file_path in image_files:
-            file_key = os.path.normcase(os.path.abspath(file_path))
+            file_key = os.path.normcase(os.path.abspath(file_path)).lower()
             if file_key not in seen:
                 seen.add(file_key)
                 unique_files.append(file_path)

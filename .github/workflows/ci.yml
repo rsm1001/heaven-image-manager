@@ -52,22 +52,14 @@ jobs:
       - name: Run unit tests with coverage
         env:
           QT_QPA_PLATFORM: offscreen
-        run: |
-          # 覆盖率门禁锁在 5 个目标模块 + Config：
-          # - JsonStorage / FileManager / UndoManager / TrashManager / SortableTableItem / Config
-          # 不锁 core.downloader 是因为 QThread.run() 在子线程内执行，
-          # coverage.py 7.x on Python 3.8 无法跟踪子线程的语句覆盖。
-          # 不锁 ui/* 是因为 widgets 不在单测范围内，留作后续。
-          pytest tests/unit \
-            --cov=core.json_storage \
-            --cov=core.file_manager \
-            --cov=core.undo_manager \
-            --cov=core.trash_manager \
-            --cov=ui.sortable_item \
-            --cov=utils.config \
-            --cov-report=xml --cov-report=term-missing \
-            --cov-fail-under=90 \
-            -v
+        # 覆盖率门禁锁在 5 个目标模块 + Config：
+        # - JsonStorage / FileManager / UndoManager / TrashManager / SortableTableItem / Config
+        # 不锁 core.downloader 是因为 QThread.run() 在子线程内执行，
+        # coverage.py 7.x on Python 3.8 无法跟踪子线程的语句覆盖。
+        # 不锁 ui/* 是因为 widgets 不在单测范围内，留作后续。
+        # 注意：Windows runner 默认 shell 是 PowerShell，不认 \ 行续行符，
+        # 因此把整条 pytest 命令写在同一行。
+        run: pytest tests/unit --cov=core.json_storage --cov=core.file_manager --cov=core.undo_manager --cov=core.trash_manager --cov=ui.sortable_item --cov=utils.config --cov-report=xml --cov-report=term-missing --cov-fail-under=90 -v
 
       - name: Run integration tests
         env:
