@@ -1,7 +1,11 @@
 """配置管理模块"""
-import os
 import json
+import os
+import shutil
+import tempfile
 import threading
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 
@@ -53,7 +57,10 @@ class Config:
     # config.json 路径
     CONFIG_FILE = BASE_DIR / "config.json"
 
-    # 线程安全锁
+    # 下载最小合法字节数（小于此值视为下载未完成/损坏）
+    MIN_VALID_DOWNLOAD_BYTES = 1024
+
+    # 线程安全锁：覆盖 Config 内所有 IO 路径，与 JsonStorage 协调
     _lock = threading.RLock()
 
     @classmethod
@@ -63,28 +70,130 @@ class Config:
         cls.TARGET_DIR.mkdir(parents=True, exist_ok=True)
         cls.TRASH_DIR.mkdir(parents=True, exist_ok=True)
 
+    # ------------------------------------------------------------------
+    # 内部工具：原子写 + 损坏隔离
+    # ------------------------------------------------------------------
+    @classmethod
+    def _isolate_corrupt_file(cls, target: Path, reason: str) -> None:
+        """把损坏/空的目标文件重命名为带时间戳的备份，避免污染下次启动。"""
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup = target.with_name(f"{target.name}.broken-{ts}-{uuid.uuid4().hex[:6]}")
+            shutil.move(str(target), str(backup))
+            # 仅在已经导入 logger 的情况下输出，避免循环依赖
+            try:
+                from utils.logger import logger
+                logger.warning(
+                    f"已隔离损坏文件 {target.name} -> {backup.name} (原因: {reason})"
+                )
+            except Exception:
+                pass
+        except Exception:
+            # 隔离失败也不致命，下次启动仍能再次尝试
+            pass
+
+    @classmethod
+    def _read_config_dict(cls) -> dict:
+        """读取并解析 config.json；遇到损坏/空文件就隔离 + 返回空 dict。"""
+        if not cls.CONFIG_FILE.exists():
+            return {}
+
+        # 空文件：直接隔离
+        try:
+            if cls.CONFIG_FILE.stat().st_size == 0:
+                cls._isolate_corrupt_file(cls.CONFIG_FILE, "empty file")
+                return {}
+        except OSError:
+            return {}
+
+        try:
+            with open(cls.CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                cls._isolate_corrupt_file(cls.CONFIG_FILE, "top-level not object")
+                return {}
+            return data
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
+            cls._isolate_corrupt_file(cls.CONFIG_FILE, f"json decode error: {e}")
+            return {}
+        except OSError:
+            return {}
+
+    @classmethod
+    def _atomic_write_json(cls, target: Path, data: dict) -> bool:
+        """把 dict 原子写入 target：先写同名 .tmp，再 os.replace。
+
+        os.replace 在 Windows 和 POSIX 都是原子的（POSIX 是 rename(2)，
+        Windows 是 MoveFileEx with REPLACE_EXISTING），从而避免半行 JSON
+        导致的"读-改-写"竞争窗口。
+        """
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=target.name + ".",
+                suffix=".tmp",
+                dir=str(target.parent),
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except OSError:
+                        # 某些 fs 不支持 fsync，忽略即可
+                        pass
+            except Exception:
+                # 写 .tmp 失败，确保关闭并清理
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
+
+            # 原子替换
+            os.replace(tmp_path, target)
+            return True
+        except Exception:
+            return False
+        finally:
+            if tmp_path is not None:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    # ------------------------------------------------------------------
+    # 公共 API
+    # ------------------------------------------------------------------
     @classmethod
     def get_last_downloaded_id(cls) -> int:
-        """从 config.json 读取 last_downloaded_id，失败时返回默认值"""
+        """从 config.json 读取 last_downloaded_id，失败时返回默认值。
+
+        失败时（包括文件不存在/空/损坏）会先尝试隔离损坏文件，避免下次启动
+        继续读到半行 JSON。
+        """
         with cls._lock:
+            data = cls._read_config_dict()
+            value = data.get("last_downloaded_id", cls.DEFAULT_LAST_DOWNLOADED_ID)
             try:
-                with open(cls.CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f).get('last_downloaded_id', cls.DEFAULT_LAST_DOWNLOADED_ID)
-            except (FileNotFoundError, json.JSONDecodeError):
+                return int(value)
+            except (TypeError, ValueError):
                 return cls.DEFAULT_LAST_DOWNLOADED_ID
 
     @classmethod
-    def set_last_downloaded_id(cls, value: int):
-        """写入 config.json 的 last_downloaded_id"""
+    def set_last_downloaded_id(cls, value: int) -> bool:
+        """写入 config.json 的 last_downloaded_id（原子写）。"""
         with cls._lock:
-            try:
-                with open(cls.CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    config_data = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError):
-                config_data = {}
-            config_data['last_downloaded_id'] = value
-            with open(cls.CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, ensure_ascii=False, indent=4)
+            data = cls._read_config_dict()
+            data["last_downloaded_id"] = int(value)
+            return cls._atomic_write_json(cls.CONFIG_FILE, data)
 
 
 # 确保目录存在

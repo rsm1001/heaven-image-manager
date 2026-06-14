@@ -128,53 +128,78 @@ class PreviewWidget(QWidget):
             self.image_label.clear()
             self.info_label.setText("comic目录中没有找到图片文件")
     
+    def _normalize_index(self) -> bool:
+        """把 current_index 修正到合法区间。空列表返回 False。"""
+        total = len(self.image_files)
+        if total == 0:
+            self.current_index = -1
+            return False
+        if self.current_index < 0:
+            self.current_index = 0
+        elif self.current_index >= total:
+            self.current_index = total - 1
+        return True
+
     def show_current_image(self):
-        """显示当前图片"""
-        if not self.image_files or self.current_index < 0 or self.current_index >= len(self.image_files):
-            self.image_label.clear()
-            self.info_label.setText("没有图片可显示")
-            return
+        """显示当前图片。
 
-        image_path = self.image_files[self.current_index]
+        损坏图自动删除时不再递归调用自身，而是用 while 循环推进，避免连续
+        损坏图导致栈溢出。同时保证 current_index 始终落在合法区间，避免
+        末尾 +1 后被取模跳回 0 的"跳图"现象。
+        """
+        # 最多连续处理 N 张坏图（N 与列表长度一致即可），超过即视作环境异常
+        max_attempts = max(1, len(self.image_files))
 
-        # 加载并显示图片
-        pixmap = ImageProcessor.load_and_resize_image(image_path)
+        for _ in range(max_attempts):
+            if not self._normalize_index():
+                self.image_label.clear()
+                self.info_label.setText("没有图片可显示")
+                self.update_counter()
+                self.update_controls()
+                return
 
-        if pixmap:
-            self.current_pixmap = pixmap
-            self.image_label.setPixmap(pixmap)
-            self.image_label.adjustSize()
+            image_path = self.image_files[self.current_index]
 
-            # 更新图片信息
-            image_info = ImageProcessor.get_image_info(image_path)
-            self.info_label.setText(f"{image_path.name} - {image_info}")
-        else:
+            # 加载并显示图片
+            pixmap = ImageProcessor.load_and_resize_image(image_path)
+
+            if pixmap:
+                self.current_pixmap = pixmap
+                self.image_label.setPixmap(pixmap)
+                self.image_label.adjustSize()
+
+                # 更新图片信息
+                image_info = ImageProcessor.get_image_info(image_path)
+                self.info_label.setText(f"{image_path.name} - {image_info}")
+                self.update_counter()
+                self.update_controls()
+                return
+
+            # 加载失败：自动删除损坏文件
             self.image_label.clear()
             self.info_label.setText(f"无法加载图片: {image_path.name}")
-
-            # 自动删除损坏/无法加载的文件，不弹确认框
             success, _ = FileManager.delete_image(image_path)
             if success:
                 logger.info(f"已自动删除损坏图片: {image_path.name}")
-                # 从列表中移除
-                del self.image_files[self.current_index]
-                # 调整索引
-                total = len(self.image_files)
-                if total == 0:
-                    self.current_index = -1
-                    self.image_label.clear()
-                    self.info_label.setText("所有图片已处理完成")
-                    self.update_counter()
-                    self.update_controls()
-                    return
-                if self.current_index >= total:
-                    self.current_index = total - 1
-                # 递归显示"新的当前张"（即原列表中的下一张）
-                self.show_current_image()
+                # 列表就地删除
+                if 0 <= self.current_index < len(self.image_files):
+                    del self.image_files[self.current_index]
             else:
-                # 删除也失败了（比如文件被锁），跳过继续显示下一张
-                self.show_next_image()
+                # 删除也失败：跳过当前张继续往后
+                logger.warning(f"损坏图片删除失败，跳过: {image_path.name}")
+                self.current_index += 1
 
+            # 重新进入循环前做一次边界修正；list 已空则在 normalize 中清空
+            if not self._normalize_index():
+                self.image_label.clear()
+                self.info_label.setText("所有图片已处理完成")
+                self.update_counter()
+                self.update_controls()
+                return
+
+        # 超过最大尝试次数仍未找到好图（极端情况：连续多张坏图又删不掉）
+        self.image_label.clear()
+        self.info_label.setText("无法显示任何图片")
         self.update_counter()
         self.update_controls()
 

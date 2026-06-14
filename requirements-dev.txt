@@ -4,7 +4,6 @@ Pillow>=8.0.0
 requests>=2.25.0
 urllib3>=1.26.0
 colorama>=0.4.4
-win10toast>=0.6
 
 # ---- 测试 / CI 依赖（开发与 CI 装）----
 # Python 3.8+ 兼容

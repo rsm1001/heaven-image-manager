@@ -198,18 +198,40 @@ class DataTabWidget(QWidget):
         logger.info(f"已随机选择项目: {self.current_random_item.get('name', '未知')}")
 
     def _on_delete_current_item(self):
-        """删除当前项目"""
+        """删除当前项目
+
+        业务主键：name（与 JsonStorage.append_items 去重逻辑保持一致）。
+        不再做"全字段 == 匹配"，避免 added_time 变化或 current_random_item
+        携带 UI 临时键导致漏删/误删。
+        """
         if not self.current_random_item:
             QMessageBox.warning(self, "警告", "请先随机获取一个项目")
             return
 
+        target_name = self.current_random_item.get("name")
+        if not target_name:
+            QMessageBox.warning(self, "警告", "当前项目缺少 name 字段，无法定位")
+            return
+
         confirmation_needed = self._get_confirmation_setting()
-        item_str = "\n".join([f"{k}: {v}" for k, v in self.current_random_item.items()])
+
+        # 先按 name 主键定位数据中真实存在的行
+        data = FileManager.load_json_data()
+        actual_rows = [item for item in data if item.get("name") == target_name]
+        if not actual_rows:
+            QMessageBox.information(
+                self, "提示",
+                f"数据中已不存在 name='{target_name}' 的项目（可能已被其他操作删除）"
+            )
+            self.current_random_item = None
+            self.random_result_text.setPlainText("项目已不存在")
+            return
 
         if confirmation_needed:
+            preview_str = "\n".join([f"{k}: {v}" for k, v in actual_rows[0].items()])
             reply = QMessageBox.question(
                 self, "确认删除",
-                f"确定要从JSON中删除以下项目吗？\n\n{item_str}",
+                f"确定要从JSON中删除以下项目吗？\n\n{preview_str}",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )
@@ -217,28 +239,20 @@ class DataTabWidget(QWidget):
             reply = QMessageBox.Yes
 
         if reply == QMessageBox.Yes:
-            logger.info(f"开始删除项目: {self.current_random_item.get('name', '未知')}")
-            deleted_item = self.current_random_item.copy()
+            logger.info(f"开始删除项目: name={target_name}")
+            # 用数据里的真实行作为 undo 记录，避免 current_random_item 含临时键
+            deleted_item = dict(actual_rows[0])
 
-            # 从数据中移除该项目
-            data = FileManager.load_json_data()
-            new_data = []
-            for item in data:
-                match = True
-                for key, value in self.current_random_item.items():
-                    if key not in item or item[key] != value:
-                        match = False
-                        break
-                if not match:
-                    new_data.append(item)
-
-            # 保存更新后的数据
-            if FileManager.save_json_data(new_data):
+            # 按 name 主键过滤后保存
+            json_path = Config.COMIC_DIR / "image_names.json"
+            new_data = [item for item in FileManager.load_json_data()
+                        if item.get("name") != target_name]
+            if FileManager.save_json_data(new_data, json_path):
                 # 记录删除操作历史
                 FileManager.push_undo({
                     "type": "delete_item",
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "data": {"item": deleted_item, "json_path": str(Config.COMIC_DIR / "image_names.json")}
+                    "data": {"item": deleted_item, "json_path": str(json_path)}
                 })
                 self._update_undo_button_state()
 

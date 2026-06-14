@@ -22,6 +22,7 @@ sys.path.insert(0, str(project_root))
 from PyQt5.QtGui import QFont
 from ui.main_window import MainWindow
 from utils.logger import logger
+from utils.notifier import notifier
 from core.downloader import shutdown_download_pool
 
 
@@ -40,8 +41,9 @@ def main():
         font = QFont("Microsoft YaHei", 9)
         app.setFont(font)
 
-        # 应用退出时关闭下载线程池
+        # 应用退出时关闭下载线程池 + 释放通知器资源
         app.aboutToQuit.connect(shutdown_download_pool)
+        app.aboutToQuit.connect(notifier.shutdown)
 
         # 创建并显示主窗口
         window = MainWindow()

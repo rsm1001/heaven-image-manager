@@ -5,7 +5,7 @@ import json
 import requests
 import urllib3
 from pathlib import Path
-from typing import List, Dict, Callable, Optional, Set
+from typing import List, Dict, Callable, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtCore import QThread, pyqtSignal
 import sys
@@ -46,6 +46,70 @@ def shutdown_download_pool():
         if _thread_pool is not None:
             _thread_pool.shutdown(wait=True)
             _thread_pool = None
+
+
+# ======================================================================
+# 完整性校验工具
+# ======================================================================
+
+# 常见图片魔数（前 4–8 字节）
+_IMAGE_MAGIC_BYTES = (
+    b"\xff\xd8\xff",                # JPEG
+    b"\x89PNG\r\n\x1a\n",            # PNG
+    b"GIF87a",                       # GIF87a
+    b"GIF89a",                       # GIF89a
+    b"BM",                           # BMP
+    b"RIFF",                         # WebP（RIFF 容器，前 4 字节是 RIFF）
+)
+
+
+def _looks_like_image(path: Path, min_size: int) -> bool:
+    """快速校验：文件存在 + 大小超阈值 + 头部字节匹配已知图片格式。"""
+    try:
+        if not path.exists():
+            return False
+        size = path.stat().st_size
+        if size < min_size:
+            return False
+        with open(path, "rb") as f:
+            head = f.read(8)
+        if not head:
+            return False
+        # WebP: "RIFF????WEBP" → 头部前 4 字节 RIFF + 后续 "WEBP"
+        if head.startswith(b"RIFF") and size >= 12:
+            with open(path, "rb") as f:
+                f.seek(8)
+                tail_head = f.read(4)
+            if tail_head == b"WEBP":
+                return True
+        return any(head.startswith(magic) for magic in _IMAGE_MAGIC_BYTES)
+    except OSError:
+        return False
+
+
+def _safe_unlink(path: Path) -> None:
+    """best-effort 删文件，失败也不抛。"""
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError:
+        pass
+
+
+def _cleanup_stale_tmp_files(directory: Path, min_size: int) -> int:
+    """启动时清理上次未完成的 .part 文件（best-effort）。"""
+    cleaned = 0
+    try:
+        for p in directory.glob("*.jpg.part"):
+            try:
+                if p.exists():
+                    p.unlink()
+                    cleaned += 1
+            except OSError:
+                continue
+    except OSError:
+        return cleaned
+    return cleaned
 
 
 class DownloadRecord:
@@ -97,14 +161,23 @@ class DownloadRecord:
 
     @staticmethod
     def get_existing_file_ids() -> Set[int]:
-        """扫描已存在的图片文件ID"""
+        """扫描已存在的图片文件 ID。
+
+        只把"文件存在 + 大小 > 0 + 后缀是图片"的算作有效；0 字节或 .part
+        残留不会被当成成功，避免重复下载时静默跳过坏文件。
+        """
         existing_ids = set()
-        for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']:
+        for ext in Config.IMAGE_EXTENSIONS:
             for p in Config.COMIC_DIR.glob(f"*{ext}"):
+                # .part 是临时文件，跳过
+                if p.suffix == ".part" or p.name.endswith(".part"):
+                    continue
                 try:
+                    if p.stat().st_size <= 0:
+                        continue
                     existing_ids.add(int(p.stem))
-                except ValueError:
-                    pass
+                except (ValueError, OSError):
+                    continue
         return existing_ids
 
 
@@ -130,6 +203,8 @@ class DownloadWorker(QThread):
         self._success_ids = []
         self._skipped_ids: List[int] = []
         self._download_records: Dict[int, dict] = {}
+        # 启动时清一次 .part 残留，并把清理数量带回 UI
+        self._partial_files_cleaned = _cleanup_stale_tmp_files(Config.COMIC_DIR, 0)
 
     def run(self):
         """执行下载任务（线程池并行模式）"""
@@ -142,6 +217,11 @@ class DownloadWorker(QThread):
         self._skipped_ids = []
         self._active_futures = []
         self._download_records = DownloadRecord.load_records()
+
+        if self._partial_files_cleaned:
+            self.status_signal.emit(
+                f"启动时已清理 {self._partial_files_cleaned} 个上次未完成的临时文件"
+            )
 
         # 扫描已存在的文件和已成功下载的记录
         existing_file_ids = DownloadRecord.get_existing_file_ids()
@@ -157,11 +237,16 @@ class DownloadWorker(QThread):
             else:
                 target_ids.append(img_id)
 
-        self.status_signal.emit(f"开始下载：从{self.start_id}开始，共{self.count}张（并行{self.max_workers}线程，已跳过{len(self._skipped_ids)}张）")
-        logger.info(f"Starting parallel download: {self.start_id}, count: {self.count}, max_workers: {self.max_workers}, skip {len(self._skipped_ids)}")
+        self.status_signal.emit(
+            f"开始下载：从{self.start_id}开始，共{self.count}张"
+            f"（并行{self.max_workers}线程，已跳过{len(self._skipped_ids)}张）"
+        )
+        logger.info(
+            f"Starting parallel download: {self.start_id}, count: {self.count}, "
+            f"max_workers: {self.max_workers}, skip {len(self._skipped_ids)}"
+        )
 
         if not target_ids:
-            self.status_signal.emit("所有图片已存在或已下载，无需重复下载")
             self.completed_signal.emit({
                 "success": True,
                 "success_count": 0,
@@ -169,7 +254,8 @@ class DownloadWorker(QThread):
                 "fail_ids": [],
                 "total": self.count,
                 "cancelled": False,
-                "skipped": self._skipped_ids
+                "skipped": self._skipped_ids,
+                "partial_files_cleaned": self._partial_files_cleaned,
             })
             self.is_running = False
             return
@@ -202,17 +288,23 @@ class DownloadWorker(QThread):
                     if success:
                         self._success_count += 1
                         self._success_ids.append(img_id)
+                        # 真实文件大小（落盘后才有意义）
+                        final_path = Config.COMIC_DIR / f"{img_id}.jpg"
+                        file_size = (
+                            final_path.stat().st_size
+                            if final_path.exists() else 0
+                        )
                         self._download_records[img_id] = {
                             "status": "success",
                             "downloaded_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "file_size": (Config.COMIC_DIR / f"{img_id}.jpg").stat().st_size if (Config.COMIC_DIR / f"{img_id}.jpg").exists() else 0
+                            "file_size": file_size,
                         }
                     else:
                         self._fail_count += 1
                         self._fail_ids.append(img_id)
                         self._download_records[img_id] = {
                             "status": "failed",
-                            "failed_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            "failed_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         }
                     current = self._completed_count
 
@@ -233,18 +325,22 @@ class DownloadWorker(QThread):
             "success_ids": self._success_ids,
             "total": self.count,
             "cancelled": self.cancelled,
-            "skipped": self._skipped_ids
+            "skipped": self._skipped_ids,
+            "partial_files_cleaned": self._partial_files_cleaned,
         }
 
         self.completed_signal.emit(final_result)
         self.is_running = False
-        logger.info(f"Download completed: success={self._success_count}, fail={self._fail_count}, skipped={len(self._skipped_ids)}")
+        logger.info(
+            f"Download completed: success={self._success_count}, "
+            f"fail={self._fail_count}, skipped={len(self._skipped_ids)}"
+        )
 
     def _download_task(self, img_id: int) -> tuple:
         """线程池中执行的下载任务（每个ID独立运行）"""
         proxies = {
             "http": os.getenv("PROXY_HTTP", "http://127.0.0.1:7897"),
-            "https": os.getenv("PROXY_HTTPS", "http://127.0.0.1:7897")
+            "https": os.getenv("PROXY_HTTP", "http://127.0.0.1:7897")
         }
 
         headers = {
@@ -262,24 +358,32 @@ class DownloadWorker(QThread):
                 return (img_id, True)
             else:
                 if not self.cancelled and proxy_retry < Config.PROXY_RETRY_TIMES - 1:
-                    self.status_signal.emit(f"[{img_id}] 代理重试 {proxy_retry + 1}/{Config.PROXY_RETRY_TIMES}...")
+                    self.status_signal.emit(
+                        f"[{img_id}] 代理重试 {proxy_retry + 1}/{Config.PROXY_RETRY_TIMES}..."
+                    )
                     time.sleep(Config.PROXY_RETRY_DELAY)
 
         logger.warning(f"Failed to download image {img_id}")
         return (img_id, False)
 
     def _do_download(self, img_id: int, proxies: dict, headers: dict) -> bool:
-        """单次下载尝试"""
+        """单次下载尝试：先写 .part，校验通过后原子替换到 .jpg。"""
         if self.cancelled:
             return False
 
         img_url = Config.BASE_URL.format(img_id)
         save_path = Config.COMIC_DIR / f"{img_id}.jpg"
+        tmp_path = Config.COMIC_DIR / f"{img_id}.jpg.part"
+        min_size = getattr(Config, "MIN_VALID_DOWNLOAD_BYTES", 1024)
 
         for retry in range(Config.RETRY_TIMES):
             if self.cancelled:
                 return False
 
+            # 每次重试前先清掉旧 .part 残留
+            _safe_unlink(tmp_path)
+
+            response = None
             try:
                 response = requests.get(
                     img_url,
@@ -287,47 +391,90 @@ class DownloadWorker(QThread):
                     headers=headers,
                     timeout=20,
                     verify=False,
-                    stream=True
+                    stream=True,
                 )
                 response.raise_for_status()
 
-                with open(save_path, "wb") as f:
+                with open(tmp_path, "wb") as f:
                     for chunk in response.iter_content(chunk_size=1024):
                         if self.cancelled:
                             return False
                         if chunk:
                             f.write(chunk)
 
-                # 下载成功后添加小延迟，避免过快（可调整或移除）
-                time.sleep(Config.REQUEST_DELAY)
-                return True
-            except requests.exceptions.HTTPError as e:
-                status_code = e.response.status_code
-                if status_code in [502, 503, 504]:
-                    if not self.cancelled:
+                # 完整性校验：大小 + 头部魔数
+                if not _looks_like_image(tmp_path, min_size):
+                    logger.warning(
+                        f"Downloaded file failed integrity check for {img_id}; "
+                        f"treating as failure"
+                    )
+                    _safe_unlink(tmp_path)
+                    if not self.cancelled and retry < Config.RETRY_TIMES - 1:
                         time.sleep(Config.RETRY_DELAY)
                         continue
+                    return False
+
+                # 落盘前先确保没有同名目标；理论上 get_existing_file_ids 已过滤，
+                # 但中途 UI 移动/删除的极端情况仍可能命中，做一次防御
+                if save_path.exists():
+                    _safe_unlink(save_path)
+
+                # 原子替换
+                os.replace(tmp_path, save_path)
+                time.sleep(Config.REQUEST_DELAY)
+                return True
+
+            except requests.exceptions.HTTPError as e:
+                status_code = e.response.status_code if e.response is not None else 0
                 logger.error(f"HTTP Error {status_code} for image {img_id}")
+                _safe_unlink(tmp_path)
+                if status_code in [502, 503, 504]:
+                    if not self.cancelled and retry < Config.RETRY_TIMES - 1:
+                        time.sleep(Config.RETRY_DELAY)
+                        continue
                 break
             except requests.exceptions.RequestException as e:
                 logger.error(f"Request error for image {img_id}: {str(e)}")
-                if not self.cancelled:
+                _safe_unlink(tmp_path)
+                if not self.cancelled and retry < Config.RETRY_TIMES - 1:
                     time.sleep(Config.RETRY_DELAY)
                     continue
                 break
             except Exception as e:
                 logger.error(f"Unknown error for image {img_id}: {str(e)}")
+                _safe_unlink(tmp_path)
                 break
+            finally:
+                # 确保 response 关闭连接
+                try:
+                    if response is not None:
+                        response.close()
+                except Exception:
+                    pass
 
+        # 全部重试失败 / 异常出口：保证不留下 .part / 半截文件
+        _safe_unlink(tmp_path)
         return False
 
     def cancel_download(self):
         """取消下载"""
         self.cancelled = True
-        with self._lock:
-            for f in self._active_futures:
-                f.cancel()
-        self.wait(3000)
+        try:
+            with self._lock:
+                for f in self._active_futures:
+                    f.cancel()
+        except Exception:
+            pass
+        try:
+            self.wait(3000)
+        except Exception:
+            pass
+        # 兜底：取消时清掉 .part 残留
+        try:
+            for p in Config.COMIC_DIR.glob("*.jpg.part"):
+                _safe_unlink(p)
+        except OSError:
+            pass
 
 
 class ThumbnailDownloader:

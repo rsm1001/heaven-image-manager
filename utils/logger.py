@@ -1,8 +1,11 @@
 """日志工具模块"""
 import logging
+import logging.handlers
+import os
 import sys
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +16,14 @@ try:
 except ImportError:
     COLORAMA_AVAILABLE = False
     Fore = Style = None
+
+
+# 默认日志配置
+LOG_DIR = Path("logs")
+LOG_FILE_NAME = "heaven_comic.log"
+LOG_MAX_BYTES = 5 * 1024 * 1024  # 单文件 5MB
+LOG_BACKUP_COUNT = 5             # 保留 5 个旧文件
+LOG_MAX_AGE_DAYS = 30            # 30 天前的文件启动时清理
 
 
 class JsonFormatter(logging.Formatter):
@@ -99,31 +110,83 @@ class ColoredFormatter(logging.Formatter):
         return f"{self._get_color_codes('grey')}{time_str}{Style.RESET_ALL if COLORAMA_AVAILABLE else ''} {level_str} {location_str} {message_str}"
 
 
-def setup_logger(name: str = "HeavenComic", level: int = logging.INFO):
+def _purge_old_logs(log_dir: Path, max_age_days: int) -> int:
+    """清理 max_age_days 天前的旧日志（RotatingFileHandler 不管 mtime）。"""
+    if not log_dir.exists():
+        return 0
+    cutoff = time.time() - max_age_days * 86400
+    cleaned = 0
+    try:
+        for p in log_dir.glob("*.log*"):
+            try:
+                if p.is_file() and p.stat().st_mtime < cutoff:
+                    p.unlink()
+                    cleaned += 1
+            except OSError:
+                continue
+    except OSError:
+        return cleaned
+    return cleaned
+
+
+def setup_logger(name: str = "HeavenComic", level: int = logging.INFO,
+                 log_dir: Path = None,
+                 max_bytes: int = LOG_MAX_BYTES,
+                 backup_count: int = LOG_BACKUP_COUNT,
+                 max_age_days: int = LOG_MAX_AGE_DAYS):
     """
     设置日志记录器
+
+    改进点：
+    1. 用 RotatingFileHandler 按大小切，不再每次启动新建时间戳文件
+    2. 启动时清理 max_age_days 天前的旧文件，限制日志目录体积
+    3. 单文件固定名 heaven_comic.log，旧文件自动改名 .log.1 ... .log.N
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    
+
     # 防止重复添加处理器
     if logger.handlers:
         return logger
-    
+
     # 控制台处理器
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(ColoredFormatter())
-    logger.addHandler(console_handler)
-    
-    # 文件处理器
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-    log_file = log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setFormatter(JsonFormatter())
-    logger.addHandler(file_handler)
-    
+    try:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(ColoredFormatter())
+        logger.addHandler(console_handler)
+    except Exception:
+        # 关闭阶段或无 stdout 的环境，console handler 可有可无
+        pass
+
+    # 文件处理器（按大小轮转）
+    if log_dir is None:
+        log_dir = LOG_DIR
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        log_dir = None
+
+    if log_dir is not None:
+        # 启动时清理过期旧文件
+        try:
+            _purge_old_logs(log_dir, max_age_days)
+        except Exception:
+            pass
+
+        log_file = log_dir / LOG_FILE_NAME
+        try:
+            file_handler = logging.handlers.RotatingFileHandler(
+                log_file,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding='utf-8',
+            )
+            file_handler.setFormatter(JsonFormatter())
+            logger.addHandler(file_handler)
+        except Exception:
+            # 极端环境（只读 fs）下退化为不写文件
+            pass
+
     return logger
 
 

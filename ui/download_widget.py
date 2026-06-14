@@ -7,7 +7,6 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSlot
 import sys
 from pathlib import Path
-from win10toast import ToastNotifier
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -15,6 +14,7 @@ sys.path.insert(0, str(project_root))
 from core.downloader import ThumbnailDownloader
 from utils.config import Config
 from utils.logger import logger
+from utils.notifier import notifier
 
 
 class DownloadWidget(QWidget):
@@ -236,17 +236,18 @@ class DownloadWidget(QWidget):
 
         self.reset_buttons()
 
-        # 发送 Windows Toast 通知
+        # 发送系统通知（跨平台：win10toast → QSystemTrayIcon → log）
         total_success = result.get("success_count", 0)
         total_fail = result.get("fail_count", 0)
+        partial_cleaned = result.get("partial_files_cleaned", 0)
         if total_success > 0:
-            toaster = ToastNotifier()
-            toaster.show_toast(
+            notifier.notify(
                 "下载完成",
                 f"成功 {total_success} 张，失败 {total_fail} 张",
                 duration=5,
-                threaded=True
             )
+        if partial_cleaned:
+            self.log_status(f"已清理 {partial_cleaned} 个上次未完成的临时文件")
     
     @pyqtSlot(str)
     def on_status_update(self, status):

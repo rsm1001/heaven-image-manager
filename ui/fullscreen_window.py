@@ -1,6 +1,6 @@
 """全屏预览与幻灯片窗口"""
-from PyQt5.QtWidgets import QDialog, QLabel, QVBoxLayout
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtWidgets import QApplication, QDialog, QLabel, QVBoxLayout, QShortcut
+from PyQt5.QtGui import QPixmap, QKeySequence
 from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtCore import pyqtSignal
 import sys
@@ -11,6 +11,14 @@ sys.path.insert(0, str(project_root))
 
 from utils.config import Config
 from utils.logger import logger
+
+
+def _is_gui_platform() -> bool:
+    """CI / offscreen 平台下不挂全局 QShortcut，避免干扰测试。"""
+    app = QApplication.instance()
+    if app is None:
+        return True
+    return app.platformName() != "offscreen"
 
 
 class FullScreenWindow(QDialog):
@@ -27,6 +35,9 @@ class FullScreenWindow(QDialog):
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setStyleSheet("background-color: black;")
+
+        # 强制获取键盘焦点（不依赖父窗口是否就绪）
+        self.setFocusPolicy(Qt.StrongFocus)
 
         # 全屏显示
         self.showFullScreen()
@@ -60,16 +71,46 @@ class FullScreenWindow(QDialog):
         # 安装事件过滤器
         self.installEventFilter(self)
 
-        # 延迟激活窗口
+        # 延迟激活窗口（避开模态事件循环刚启动时的竞态）
         QTimer.singleShot(100, self._activate_and_show)
 
+        # 焦点巡检：每 500ms 检查一次是否被主窗口抢走焦点，连续 3 次被抢则强制 raise
+        self._focus_check_count = 0
+        self._focus_check_timer = QTimer(self)
+        self._focus_check_timer.timeout.connect(self._check_focus)
+        self._focus_check_timer.start(500)
+
+        # 兜底：QShortcut 不依赖焦点窗口也能响应（ApplicationShortcut）
+        # CI / offscreen 平台下不挂，避免干扰测试
+        if _is_gui_platform():
+            self._install_global_shortcuts()
+
         logger.info(f"FullScreenWindow opened at index {start_index}")
+
+    def _install_global_shortcuts(self):
+        """注册 QShortcut 兜底：焦点被主窗口抢走时仍能翻页。"""
+        QShortcut(QKeySequence(Qt.Key_Right), self, activated=self.show_next)
+        QShortcut(QKeySequence(Qt.Key_Left), self, activated=self.show_prev)
+        QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.toggle_slideshow)
+        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
+
+    def _check_focus(self):
+        """焦点巡检：被主窗口抢走后强制抢回。"""
+        if not self.isActiveWindow():
+            self._focus_check_count += 1
+            if self._focus_check_count >= 3:
+                # 连续 3 次（1.5s）被抢走，强制 raise + activate
+                self.raise_()
+                self.activateWindow()
+                self.setFocus()
+                self._focus_check_count = 0
+        else:
+            self._focus_check_count = 0
 
     def _activate_and_show(self):
         """激活窗口并显示图片"""
         self.activateWindow()
         self.raise_()
-        self.setFocusPolicy(Qt.StrongFocus)
         self.setFocus()
         self._show_current_image()
 
@@ -176,6 +217,8 @@ class FullScreenWindow(QDialog):
 
     def closeEvent(self, event):
         self.slide_timer.stop()
+        if hasattr(self, "_focus_check_timer") and self._focus_check_timer is not None:
+            self._focus_check_timer.stop()
         self.closed.emit(self.current_index)
         logger.info(f"FullScreenWindow closed at index {self.current_index}")
         event.accept()
