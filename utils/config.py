@@ -9,6 +9,32 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _load_env_file(env_path: Path) -> None:
+    """加载 .env 文件中的键值对到 os.environ（不覆盖已有变量）。"""
+    if not env_path.exists():
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError:
+        # 读取失败不应影响程序启动
+        pass
+
+
+# 启动时静默加载项目根目录的 .env，避免硬编码代理等敏感信息
+_load_env_file(Path(__file__).parent.parent / ".env")
+
+
 class Config:
     """配置类 - 统一管理所有配置"""
 
@@ -59,6 +85,17 @@ class Config:
 
     # 下载最小合法字节数（小于此值视为下载未完成/损坏）
     MIN_VALID_DOWNLOAD_BYTES = 1024
+
+    # 代理配置（从环境变量读取，避免硬编码；可放 .env）
+    PROXY_HTTP = os.getenv("PROXY_HTTP", "")
+    PROXY_HTTPS = os.getenv("PROXY_HTTPS", "")
+
+    # HTTP 请求头配置（外部服务 UA/Referer，便于在 .env 覆盖）
+    DOWNLOAD_USER_AGENT = os.getenv(
+        "DOWNLOAD_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+    )
+    DOWNLOAD_REFERER = os.getenv("DOWNLOAD_REFERER", "https://18comic.vip/")
 
     # 线程安全锁：覆盖 Config 内所有 IO 路径，与 JsonStorage 协调
     _lock = threading.RLock()
