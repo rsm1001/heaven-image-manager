@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.json_storage import JsonStorage
+from core.file_management.json_storage import JsonStorage
 
 
 # ---------------- load ----------------

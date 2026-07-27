@@ -14,8 +14,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.file_manager import FileManager
-from core.image_processor import ImageProcessor
+from core.file_management.file_manager import FileManager
+from core.image.image_processor import ImageProcessor
 from utils.config import Config
 from utils.logger import logger
 from .preview_widget import PreviewWidget

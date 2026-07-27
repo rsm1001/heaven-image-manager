@@ -19,7 +19,7 @@ import pytest
 import responses as responses_lib
 from PIL import Image
 
-from core.downloader import (
+from core.download.downloader import (
     DownloadRecord,
     DownloadWorker,
     get_download_pool,

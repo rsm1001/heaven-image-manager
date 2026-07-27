@@ -11,7 +11,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.file_manager import FileManager
+from core.file_management.file_manager import FileManager
 from utils.config import Config
 from utils.logger import logger
 from ui.sortable_item import SortableTableItem

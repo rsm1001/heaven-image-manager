@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from core.trash_manager import TrashManager
+from core.file_management.trash_manager import TrashManager
 from tests.fixtures.jsons import write_json, sample_trash_records
 
 

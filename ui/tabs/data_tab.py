@@ -15,7 +15,7 @@ from datetime import datetime
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config import Config
-from core.file_manager import FileManager
+from core.file_management.file_manager import FileManager
 from ui.sortable_item import SortableTableItem
 
 logger = logging.getLogger("HeavenComic")

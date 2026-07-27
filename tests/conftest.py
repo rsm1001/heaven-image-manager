@@ -94,7 +94,7 @@ def _config_paths(tmp_path, monkeypatch):
 # ----------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def _reset_class_state(_config_paths):
-    from core.undo_manager import UndoManager
+    from core.file_management.undo_manager import UndoManager
     UndoManager.clear()
     yield
 

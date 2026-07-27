@@ -23,7 +23,7 @@ from PyQt5.QtGui import QFont
 from ui.main_window import MainWindow
 from utils.logger import logger
 from utils.notifier import notifier
-from core.downloader import shutdown_download_pool
+from core.download.downloader import shutdown_download_pool
 
 
 def main():

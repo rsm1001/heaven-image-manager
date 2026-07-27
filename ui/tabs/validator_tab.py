@@ -14,7 +14,7 @@ from datetime import datetime
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config import Config
-from core.image_validator import BatchValidator, ValidationReportExporter
+from core.image.image_validator import BatchValidator, ValidationReportExporter
 from ui.validation_thread import ValidationThread
 
 logger = logging.getLogger("HeavenComic")

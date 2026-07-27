@@ -122,14 +122,14 @@ class UndoManager:
             return False, "删除记录数据不完整"
 
         # 延迟导入避免循环引用
-        from core.trash_manager import TrashManager
+        from core.file_management.trash_manager import TrashManager
         success, msg = TrashManager.restore(name)
         return success, f"已撤销删除: {name}" if success else msg
 
     @classmethod
     def _undo_extract(cls, data: dict) -> Tuple[bool, str]:
         """撤销提取操作"""
-        from core.json_storage import JsonStorage
+        from core.file_management.json_storage import JsonStorage
 
         added_items = data.get("added_items", [])
         json_path = data.get("json_path")
@@ -150,7 +150,7 @@ class UndoManager:
     @classmethod
     def _undo_delete_item(cls, data: dict) -> Tuple[bool, str]:
         """撤销删除JSON项操作"""
-        from core.json_storage import JsonStorage
+        from core.file_management.json_storage import JsonStorage
 
         item = data.get("item")
         json_path = data.get("json_path")

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.undo_manager import UndoManager, UndoOperationType
+from core.file_management.undo_manager import UndoManager, UndoOperationType
 from tests.fixtures.jsons import write_json
 
 
@@ -118,7 +118,7 @@ class TestUndoDelete:
     def test_undo_delete_restores_from_trash(
         self, config_paths, trash_records_path
     ):
-        from core.trash_manager import TrashManager
+        from core.file_management.trash_manager import TrashManager
 
         comic = config_paths["comic"]
         trash = config_paths["trash"]
@@ -170,7 +170,7 @@ class TestUndoExtract:
         assert ok is True
         assert "已撤销提取" in msg
         # 只剩 kept
-        from core.json_storage import JsonStorage
+        from core.file_management.json_storage import JsonStorage
         assert JsonStorage.load(image_names_path) == [{"name": "kept"}]
 
     def test_undo_extract_no_added_items(self):
@@ -191,7 +191,7 @@ class TestUndoExtract:
         })
         ok, _, _ = UndoManager.undo()
         assert ok is True
-        from core.json_storage import JsonStorage
+        from core.file_management.json_storage import JsonStorage
         assert JsonStorage.load(image_names_path) == [{"name": "y2"}]
 
 
@@ -209,7 +209,7 @@ class TestUndoDeleteItem:
         })
         ok, _, _ = UndoManager.undo()
         assert ok is True
-        from core.json_storage import JsonStorage
+        from core.file_management.json_storage import JsonStorage
         assert JsonStorage.load(image_names_path) == [
             {"name": "alive"},
             {"name": "dead"},

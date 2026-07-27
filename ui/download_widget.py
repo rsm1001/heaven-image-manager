@@ -11,7 +11,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.downloader import ThumbnailDownloader
+from core.download.downloader import ThumbnailDownloader
 from utils.config import Config
 from utils.logger import logger
 from utils.notifier import notifier

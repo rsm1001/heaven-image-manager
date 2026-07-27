@@ -16,16 +16,16 @@ from typing import Dict, List
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from core.download_pool import get_download_pool
-from core.download_record import DownloadRecordRepository
-from core.download_task import DownloadTask
-from core.http_client import create_http_client
-from core.image_integrity import cleanup_stale_tmp_files, safe_unlink
+from core.download.download_pool import get_download_pool
+from core.download.download_record import DownloadRecordRepository
+from core.download.download_task import DownloadTask
+from core.download.http_client import create_http_client
+from core.download.image_integrity import cleanup_stale_tmp_files, safe_unlink
 from utils.config import Config
 from utils.logger import logger
 
 # 默认线程数（与下载池保持一致）
-from core.download_pool import DEFAULT_MAX_WORKERS
+from core.download.download_pool import DEFAULT_MAX_WORKERS
 
 
 class DownloadWorker(QThread):

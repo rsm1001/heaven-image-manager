@@ -11,12 +11,12 @@ from typing import Callable, Optional
 
 from utils.config import Config
 from utils.logger import logger
-from core.image_integrity import (
+from core.download.image_integrity import (
     atomic_replace,
     looks_like_image,
     safe_unlink,
 )
-from core.http_client import HttpClient
+from core.download.http_client import HttpClient
 
 
 class DownloadTask:

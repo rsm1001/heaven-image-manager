@@ -14,10 +14,10 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from core.file_manager import FileManager
-from core.undo_manager import UndoManager, UndoOperationType
-from core.trash_manager import TrashManager
-from core.json_storage import JsonStorage
+from core.file_management.file_manager import FileManager
+from core.file_management.undo_manager import UndoManager, UndoOperationType
+from core.file_management.trash_manager import TrashManager
+from core.file_management.json_storage import JsonStorage
 from tests.fixtures.jsons import write_json, sample_image_records
 
 

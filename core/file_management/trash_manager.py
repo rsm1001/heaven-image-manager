@@ -6,7 +6,7 @@ from datetime import datetime
 
 from utils.logger import logger
 from utils.config import Config
-from core.json_storage import JsonStorage
+from core.file_management.json_storage import JsonStorage
 
 
 class TrashManager:

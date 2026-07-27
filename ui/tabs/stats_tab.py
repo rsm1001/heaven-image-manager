@@ -9,7 +9,7 @@ import sys
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
-from core.file_manager import FileManager
+from core.file_management.file_manager import FileManager
 
 
 class StatsTabWidget(QWidget):

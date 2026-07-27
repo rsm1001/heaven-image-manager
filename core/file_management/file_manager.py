@@ -7,9 +7,9 @@ from datetime import datetime
 
 from utils.logger import logger
 from utils.config import Config
-from core.undo_manager import UndoManager, UndoOperationType
-from core.trash_manager import TrashManager
-from core.json_storage import JsonStorage
+from core.file_management.undo_manager import UndoManager, UndoOperationType
+from core.file_management.trash_manager import TrashManager
+from core.file_management.json_storage import JsonStorage
 
 
 class FileManager:
