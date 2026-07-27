@@ -2,37 +2,59 @@
 chcp 65001 > nul
 setlocal
 
-echo 正在打包天堂图片管理器...
-echo ==============================
+set "PROJECT_ROOT=%~dp0"
+set "VENV_PYTHON=%PROJECT_ROOT%.venv\Scripts\python.exe"
 
-REM 检查PyInstaller是否安装
-python -c "import PyInstaller" > nul 2>&1
+echo Building TianTang Image Manager...
+
+if not exist "%VENV_PYTHON%" (
+    echo Creating virtual environment...
+    py -3 -m venv "%PROJECT_ROOT%.venv"
+)
+
+if not exist "%VENV_PYTHON%" (
+    python -m venv "%PROJECT_ROOT%.venv"
+)
+
+if not exist "%VENV_PYTHON%" (
+    echo 请安装 Python 3.8+ 并加入 PATH
+    pause
+    exit /b 1
+)
+
+echo Installing dependencies...
+"%VENV_PYTHON%" -m pip install -r "%PROJECT_ROOT%requirements.txt"
 if errorlevel 1 (
-    echo 未安装PyInstaller，正在安装...
-    pip install pyinstaller
+    echo Dependency installation failed
+    pause
+    exit /b 1
+)
+
+"%VENV_PYTHON%" -c "import PyInstaller" > nul 2>&1
+if errorlevel 1 (
+    echo PyInstaller is not installed. Installing...
+    "%VENV_PYTHON%" -m pip install pyinstaller
     if errorlevel 1 (
-        echo PyInstaller安装失败
+        echo PyInstaller installation failed
         pause
         exit /b 1
     )
 )
 
-REM 进入项目目录
-cd /d "C:\Users\27185\Desktop\新建文件夹\天堂_PyQt"
+cd /d "%PROJECT_ROOT%"
 
-REM 执行打包
-echo 开始打包...
-pyinstaller heaven_comic.spec
+echo Starting build...
+"%VENV_PYTHON%" -m PyInstaller heaven_comic.spec
 
 if errorlevel 1 (
-    echo 打包失败
+    echo Build failed
     pause
     exit /b 1
 )
 
 echo.
-echo 打包完成！
-echo 可执行文件位于: dist\\天堂图片管理器 目录中
+echo Build completed.
+echo Executable files are in the dist directory.
 echo.
 
 pause

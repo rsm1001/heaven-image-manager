@@ -27,6 +27,7 @@ MANIFEST
 #  Usually these files are written by a CI server
 *.manifest
 *.spec
+!heaven_comic.spec
 
 # Installer logs
 pip-log.txt
@@ -97,6 +98,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv/
 env/
 venv/
 ENV/
