@@ -22,6 +22,7 @@ sys.path.insert(0, str(project_root))
 from PyQt5.QtGui import QFont
 from ui.main_window import MainWindow
 from utils.logger import logger
+from utils.theme_manager import ThemeManager
 from utils.notifier import notifier
 from core.download.downloader import shutdown_download_pool
 
@@ -38,6 +39,9 @@ def main():
         app.setOrganizationName("HeavenComic")
 
         # 设置默认字体
+        # Apply the persisted theme before creating any top-level window.
+        ThemeManager.initialize(app)
+
         font = QFont("Microsoft YaHei", 9)
         app.setFont(font)
 

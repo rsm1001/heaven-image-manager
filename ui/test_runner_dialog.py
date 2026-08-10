@@ -18,6 +18,8 @@ from pathlib import Path
 
 from PyQt5.QtCore import Qt, QProcess, QProcessEnvironment
 from PyQt5.QtGui import QFont, QTextCursor
+from utils.theme_manager import ThemeManager
+
 from PyQt5.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -54,6 +56,8 @@ class TestRunnerDialog(QDialog):
         self.process: QProcess = None
         self._summary = ""  # 缓存 pytest 输出的最后一段汇总
         self._has_failed = False
+        self._status_running = False
+        self._status_success = None
 
         self.setWindowTitle("运行测试")
         self.resize(900, 600)
@@ -64,7 +68,10 @@ class TestRunnerDialog(QDialog):
 
         # 顶部状态行
         self.status_label = QLabel("准备就绪")
-        self.status_label.setStyleSheet("font-weight: bold;")
+        self.status_label.setStyleSheet(ThemeManager.status_style())
+        theme_manager = ThemeManager.instance()
+        if theme_manager is not None:
+            theme_manager.theme_changed.connect(self._refresh_status_style)
         layout.addWidget(self.status_label)
 
         # 输出文本框
@@ -103,6 +110,8 @@ class TestRunnerDialog(QDialog):
         self.output.clear()
         self._summary = ""
         self._has_failed = False
+        self._status_running = False
+        self._status_success = None
         self._set_status("正在运行…", running=True)
         self.run_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
@@ -203,21 +212,17 @@ class TestRunnerDialog(QDialog):
         self.output.moveCursor(QTextCursor.End)
 
     def _set_status(self, msg: str, running: bool = False, success: bool = None):
-        """更新顶部状态。颜色根据 success 切换。"""
+        """Update the status label using semantic colors from the active theme."""
+        self._status_running = running
+        self._status_success = success
         self.status_label.setText(msg)
-        if success is True:
-            self.status_label.setStyleSheet(
-                "font-weight: bold; color: #1a7f37; background: #dafbe1; padding: 4px;"
-            )
-        elif success is False:
-            self.status_label.setStyleSheet(
-                "font-weight: bold; color: #cf222e; background: #ffebe9; padding: 4px;"
-            )
-        else:
-            color = "#0969da" if running else "#57606a"
-            self.status_label.setStyleSheet(
-                f"font-weight: bold; color: {color}; padding: 4px;"
-            )
+        self._refresh_status_style()
+
+    def _refresh_status_style(self, *_):
+        """Refresh a live dialog after an application theme change."""
+        self.status_label.setStyleSheet(
+            ThemeManager.status_style(success=self._status_success, running=self._status_running)
+        )
 
     def _reset_buttons(self):
         self.run_btn.setEnabled(True)

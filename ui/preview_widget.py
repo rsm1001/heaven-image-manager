@@ -98,10 +98,10 @@ class PreviewWidget(QWidget):
         info_layout.setContentsMargins(0, 0, 0, 0)
         
         self.info_label = QLabel("就绪")
-        self.info_label.setStyleSheet("font-size: 12px; color: gray;")
+        self.info_label.setObjectName("previewInfoLabel")
         
         self.counter_label = QLabel("0/0")
-        self.counter_label.setStyleSheet("font-size: 12px; color: gray;")
+        self.counter_label.setObjectName("previewCounterLabel")
         
         info_layout.addWidget(self.info_label)
         info_layout.addStretch()

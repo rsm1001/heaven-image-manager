@@ -164,3 +164,45 @@ class TestIsolateCorruptFile:
         invalid_target = Path("/invalid/path/that/cannot/exist/file.txt")
         Config._isolate_corrupt_file(invalid_target, "simulated failure")
         # 无异常 = 测试通过
+
+
+# ---------------- Theme preferences ----------------
+
+class TestThemePreferences:
+    def test_theme_mode_round_trip_preserves_existing_config(self, tmp_path):
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"last_downloaded_id": 42}), encoding="utf-8")
+        original = Config.CONFIG_FILE
+        Config.CONFIG_FILE = config_file
+        try:
+            assert Config.set_theme_mode("dark") is True
+            assert Config.get_theme_mode() == "dark"
+            data = json.loads(config_file.read_text(encoding="utf-8"))
+            assert data["last_downloaded_id"] == 42
+            assert data["theme_mode"] == "dark"
+        finally:
+            Config.CONFIG_FILE = original
+
+    def test_invalid_theme_mode_is_rejected_and_falls_back_to_auto(self, tmp_path):
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"theme_mode": "sepia"}), encoding="utf-8")
+        original = Config.CONFIG_FILE
+        Config.CONFIG_FILE = config_file
+        try:
+            assert Config.get_theme_mode() == "auto"
+            assert Config.set_theme_mode("sepia") is False
+        finally:
+            Config.CONFIG_FILE = original
+
+    def test_accent_color_round_trip_and_validation(self, tmp_path):
+        config_file = tmp_path / "config.json"
+        original = Config.CONFIG_FILE
+        Config.CONFIG_FILE = config_file
+        try:
+            assert Config.set_accent_color("#12abEF") is True
+            assert Config.get_accent_color() == "#12ABEF"
+            assert Config.set_accent_color("url(javascript:bad)") is False
+            config_file.write_text(json.dumps({"accent_color": "invalid"}), encoding="utf-8")
+            assert Config.get_accent_color() == Config.DEFAULT_ACCENT_COLOR
+        finally:
+            Config.CONFIG_FILE = original

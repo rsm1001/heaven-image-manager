@@ -2,11 +2,11 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QSplitter, QStatusBar, QMenuBar, QMenu,
-    QAction, QFileDialog, QMessageBox, QGroupBox, QScrollArea, QSizePolicy,
-    QDialog, QListWidget, QTextEdit, QSplitter
+    QAction, QActionGroup, QFileDialog, QMessageBox, QGroupBox, QScrollArea, QSizePolicy,
+    QDialog, QListWidget, QTextEdit, QSplitter, QColorDialog
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtGui import QIcon, QFont, QColor
 import os
 import sys
 from pathlib import Path
@@ -18,6 +18,7 @@ from core.file_management.file_manager import FileManager
 from core.image.image_processor import ImageProcessor
 from utils.config import Config
 from utils.logger import logger
+from utils.theme_manager import ThemeManager
 from .preview_widget import PreviewWidget
 from .manager_widget import ManagerWidget
 from .download_widget import DownloadWidget
@@ -85,6 +86,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(Config.WINDOW_TITLE)
         self.setGeometry(100, 100, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT)
+        self.theme_manager = ThemeManager.get_or_create()
 
         # 设置窗口居中显示
         #if hasattr(Config, 'CENTER_ON_SCREEN') and Config.CENTER_ON_SCREEN:
@@ -110,7 +112,7 @@ class MainWindow(QMainWindow):
 
         self.open_101_button = QPushButton("📂 101")
         self.open_101_button.setFixedSize(80, 24)
-        self.open_101_button.setStyleSheet("padding: 0; margin: 0;")
+        self.open_101_button.setProperty("compact", True)
         font = self.open_101_button.font()
         font.setPointSize(8)
         self.open_101_button.setFont(font)
@@ -118,13 +120,13 @@ class MainWindow(QMainWindow):
 
         self.undo_button = QPushButton("↩ 撤销")
         self.undo_button.setFixedSize(80, 24)
-        self.undo_button.setStyleSheet("padding: 0; margin: 0;")
+        self.undo_button.setProperty("compact", True)
         self.undo_button.setEnabled(False)
         self.undo_button.clicked.connect(self.on_undo)
 
         self.test_button = QPushButton("🧪 测试")
         self.test_button.setFixedSize(80, 24)
-        self.test_button.setStyleSheet("padding: 0; margin: 0;")
+        self.test_button.setProperty("compact", True)
         self.test_button.setToolTip("运行项目测试套件")
         font_t = self.test_button.font()
         font_t.setPointSize(8)
@@ -139,7 +141,7 @@ class MainWindow(QMainWindow):
         # 创建选项卡部件
         self.tab_widget = QTabWidget()
         self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.tab_widget.setStyleSheet("QTabWidget::pane { padding: 0; margin: 0; border: 0; }")
+        self.tab_widget.setObjectName("mainTabWidget")
 
         # 创建各个功能部件
         self.preview_widget = PreviewWidget()
@@ -216,6 +218,8 @@ class MainWindow(QMainWindow):
         log_action = QAction('查看日志', self)
         log_action.triggered.connect(self.show_log_viewer)
         view_menu.addAction(log_action)
+        view_menu.addSeparator()
+        self._create_theme_menu(view_menu)
 
         # 工具菜单
         tools_menu = menu_bar.addMenu('工具')
@@ -241,6 +245,75 @@ class MainWindow(QMainWindow):
         about_action = QAction('关于', self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    def _create_theme_menu(self, view_menu):
+        """Create the theme and accent-color controls, then sync persisted state."""
+        theme_menu = view_menu.addMenu("\u4e3b\u9898")
+        self.theme_action_group = QActionGroup(self)
+        self.theme_action_group.setExclusive(True)
+        self.theme_actions = {}
+        for mode, label in (
+            (ThemeManager.THEME_LIGHT, "\u6d45\u8272"),
+            (ThemeManager.THEME_DARK, "\u6df1\u8272"),
+            (ThemeManager.THEME_AUTO, "\u8ddf\u968f\u7cfb\u7edf"),
+        ):
+            action = QAction(label, self, checkable=True)
+            action.triggered.connect(
+                lambda checked, selected_mode=mode: checked and self._change_theme(selected_mode)
+            )
+            self.theme_action_group.addAction(action)
+            theme_menu.addAction(action)
+            self.theme_actions[mode] = action
+
+        accent_menu = theme_menu.addMenu("\u54c1\u724c\u5f3a\u8c03\u8272")
+        for label, color in ThemeManager.ACCENT_PRESETS:
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda checked=False, selected_color=color: self._change_accent_color(selected_color)
+            )
+            accent_menu.addAction(action)
+        accent_menu.addSeparator()
+
+        custom_action = QAction("\u81ea\u5b9a\u4e49\u989c\u8272\u2026", self)
+        custom_action.triggered.connect(self._choose_custom_accent_color)
+        accent_menu.addAction(custom_action)
+
+        reset_action = QAction("\u6062\u590d\u9ed8\u8ba4\u5f3a\u8c03\u8272", self)
+        reset_action.triggered.connect(self._reset_accent_color)
+        accent_menu.addAction(reset_action)
+
+        self.theme_manager.theme_changed.connect(self._sync_theme_actions)
+        self._sync_theme_actions()
+
+    def _sync_theme_actions(self, *_):
+        """Keep the checked menu item aligned with the persisted mode, not OS output."""
+        action = self.theme_actions.get(self.theme_manager.theme_mode)
+        if action is not None:
+            action.setChecked(True)
+
+    def _change_theme(self, theme_mode):
+        if self.theme_manager.set_theme_mode(theme_mode):
+            label = {
+                ThemeManager.THEME_LIGHT: "\u6d45\u8272",
+                ThemeManager.THEME_DARK: "\u6df1\u8272",
+                ThemeManager.THEME_AUTO: "\u8ddf\u968f\u7cfb\u7edf",
+            }[theme_mode]
+            self.status_bar.showMessage("\u4e3b\u9898\u5df2\u5207\u6362\u4e3a\uff1a{}".format(label))
+
+    def _change_accent_color(self, color):
+        if self.theme_manager.set_accent_color(color):
+            self.status_bar.showMessage("\u54c1\u724c\u5f3a\u8c03\u8272\u5df2\u66f4\u65b0")
+
+    def _choose_custom_accent_color(self):
+        color = QColorDialog.getColor(
+            QColor(self.theme_manager.accent_color), self, "\u9009\u62e9\u54c1\u724c\u5f3a\u8c03\u8272"
+        )
+        if color.isValid():
+            self._change_accent_color(color.name().upper())
+
+    def _reset_accent_color(self):
+        if self.theme_manager.reset_accent_color():
+            self.status_bar.showMessage("\u54c1\u724c\u5f3a\u8c03\u8272\u5df2\u6062\u590d\u9ed8\u8ba4")
 
     def toggle_confirmation(self):
         """切换二次确认功能"""

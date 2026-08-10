@@ -41,7 +41,7 @@ class TrashWidget(QDialog):
         
         # 统计信息
         self.stats_label = QLabel("就绪")
-        self.stats_label.setStyleSheet("color: gray; padding: 5px;")
+        self.stats_label.setObjectName("trashStatsLabel")
         layout.addWidget(self.stats_label)
         
         # 表格
@@ -101,7 +101,7 @@ class TrashWidget(QDialog):
         
         # 底部说明
         note_label = QLabel("提示：恢复图片将放回原始位置，如原位置文件已存在则自动重命名")
-        note_label.setStyleSheet("color: gray; font-size: 11px;")
+        note_label.setObjectName("trashHintLabel")
         layout.addWidget(note_label)
     
     def load_data(self):

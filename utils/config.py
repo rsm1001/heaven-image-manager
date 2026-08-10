@@ -1,5 +1,6 @@
 """配置管理模块"""
 import json
+import re
 import os
 import shutil
 import tempfile
@@ -62,6 +63,11 @@ class Config:
     # 下载配置
     DEFAULT_START_ID = 9009  # SpinBox 默认起始ID的 fallback 值
     DEFAULT_LAST_DOWNLOADED_ID = 9008  # config.json 读取失败时的默认值
+
+    # Appearance preferences. Kept compatible with Python 3.8 / PyQt5 5.15.
+    DEFAULT_THEME_MODE = "auto"
+    VALID_THEME_MODES = {"light", "dark", "auto"}
+    DEFAULT_ACCENT_COLOR = "#4F7CFF"
     TOTAL_COUNT = 450
     RETRY_TIMES = 3
     RETRY_DELAY = 15
@@ -223,6 +229,44 @@ class Config:
                 return int(value)
             except (TypeError, ValueError):
                 return cls.DEFAULT_LAST_DOWNLOADED_ID
+
+    @classmethod
+    def get_theme_mode(cls) -> str:
+        """Return the persisted theme preference, with a safe Auto fallback."""
+        with cls._lock:
+            value = cls._read_config_dict().get("theme_mode", cls.DEFAULT_THEME_MODE)
+        value = str(value).lower()
+        return value if value in cls.VALID_THEME_MODES else cls.DEFAULT_THEME_MODE
+
+    @classmethod
+    def set_theme_mode(cls, value: str) -> bool:
+        """Persist a validated Light / Dark / Auto preference atomically."""
+        value = str(value).lower()
+        if value not in cls.VALID_THEME_MODES:
+            return False
+        with cls._lock:
+            data = cls._read_config_dict()
+            data["theme_mode"] = value
+            return cls._atomic_write_json(cls.CONFIG_FILE, data)
+
+    @classmethod
+    def get_accent_color(cls) -> str:
+        """Return the persisted #RRGGBB accent color, or the default on invalid data."""
+        with cls._lock:
+            value = cls._read_config_dict().get("accent_color", cls.DEFAULT_ACCENT_COLOR)
+        if not isinstance(value, str) or re.fullmatch(r"#[0-9A-Fa-f]{6}", value) is None:
+            return cls.DEFAULT_ACCENT_COLOR
+        return value.upper()
+
+    @classmethod
+    def set_accent_color(cls, value: str) -> bool:
+        """Persist a literal #RRGGBB accent color atomically."""
+        if not isinstance(value, str) or re.fullmatch(r"#[0-9A-Fa-f]{6}", value) is None:
+            return False
+        with cls._lock:
+            data = cls._read_config_dict()
+            data["accent_color"] = value.upper()
+            return cls._atomic_write_json(cls.CONFIG_FILE, data)
 
     @classmethod
     def set_last_downloaded_id(cls, value: int) -> bool:
