@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Dict, Set
 
+from core.download.image_integrity import looks_like_image
+
 from utils.config import Config
 from utils.logger import logger
 
@@ -70,23 +72,33 @@ class DownloadRecordRepository:
 
     @staticmethod
     def existing_file_ids() -> Set[int]:
-        """扫描已存在的图片文件 ID。
+        """扫描已存在的图片文件 ID（递归子目录，回收站除外）。
 
-        只把"文件存在 + 大小 > 0 + 后缀是图片"的算作有效；0 字节或 .part
-        残留不会被当成成功，避免重复下载时静默跳过坏文件。
+        递归扫描是必要的：文件管理功能会把图片 shutil.move 进
+        Config.TARGET_DIR 等子目录，只扫顶层会把它们判为缺失并整批重下。
+        回收站（TRASH_DIR）里的文件视为已删除，不算存在。
+
+        只把"文件存在 + 非空 + 头部魔数是已知图片格式"的算作有效；0 字节、
+        HTML 错误页或 .part 残留不会被当成成功。这里刻意不设最小字节数门槛
+        （下载验收才用 MIN_VALID_DOWNLOAD_BYTES）：已在磁盘上的小图若被判为
+        缺失，会陷入"每次重下、每次验收失败"的死循环并卡住续传检查点。
         """
         existing_ids: Set[int] = set()
+        trash_dir = Config.TRASH_DIR
         for ext in Config.IMAGE_EXTENSIONS:
-            for p in Config.COMIC_DIR.glob(f"*{ext}"):
+            for p in Config.COMIC_DIR.rglob(f"*{ext}"):
+                if trash_dir in p.parents:
+                    continue
                 # .part 是临时文件，跳过
-                if p.suffix == ".part" or p.name.endswith(".part"):
+                if p.name.endswith(".part"):
                     continue
+                # 先解析数字 stem 再读文件头：非数字文件名不用白开一次文件
                 try:
-                    if p.stat().st_size <= 0:
-                        continue
-                    existing_ids.add(int(p.stem))
-                except (ValueError, OSError):
+                    img_id = int(p.stem)
+                except ValueError:
                     continue
+                if looks_like_image(p, 1):
+                    existing_ids.add(img_id)
         return existing_ids
 
     # ------------------------------------------------------------------

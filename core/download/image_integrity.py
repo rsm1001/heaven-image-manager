@@ -5,14 +5,13 @@
 """
 from pathlib import Path
 
-# 常见图片魔数（前 4–8 字节）
+# 常见图片魔数（前 4–8 字节）；RIFF 容器单独校验 WEBP 标记
 _IMAGE_MAGIC_BYTES = (
     b"\xff\xd8\xff",                # JPEG
     b"\x89PNG\r\n\x1a\n",            # PNG
     b"GIF87a",                       # GIF87a
     b"GIF89a",                       # GIF89a
     b"BM",                           # BMP
-    b"RIFF",                         # WebP（RIFF 容器，前 4 字节是 RIFF）
 )
 
 
@@ -25,16 +24,12 @@ def looks_like_image(path: Path, min_size: int) -> bool:
         if size < min_size:
             return False
         with open(path, "rb") as f:
-            head = f.read(8)
+            head = f.read(12)
         if not head:
             return False
-        # WebP: "RIFF????WEBP" → 头部前 4 字节 RIFF + 后续 "WEBP"
-        if head.startswith(b"RIFF") and size >= 12:
-            with open(path, "rb") as f:
-                f.seek(8)
-                tail_head = f.read(4)
-            if tail_head == b"WEBP":
-                return True
+        # WebP: "RIFF????WEBP" → 一次读满 12 字节即可校验，无需二次 open
+        if head.startswith(b"RIFF"):
+            return head[8:12] == b"WEBP"
         return any(head.startswith(magic) for magic in _IMAGE_MAGIC_BYTES)
     except OSError:
         return False

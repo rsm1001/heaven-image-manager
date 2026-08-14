@@ -123,11 +123,12 @@ class TestDownloadRecord:
         comic = config_paths["comic"]
         # 写 2 张数字 stem
         (comic / "100.jpg").write_bytes(_jpg_bytes())
-        (comic / "200.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        (comic / "200.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 1024)
         # 非数字 stem
         (comic / "abc.jpg").write_bytes(b"x")
         ids = DownloadRecord.get_existing_file_ids()
-        assert ids == {100, 200}
+        (comic / "300.jpg").write_bytes(b"not an image" + b"\x00" * 2048)
+        assert DownloadRecord.get_existing_file_ids() == {100, 200}
 
 
 # ======================================================================
@@ -169,6 +170,9 @@ class TestDownloadWorker:
         assert result["success_count"] == 3
         assert result["fail_count"] == 0
         assert result["cancelled"] is False
+        assert result["last_contiguous_id"] == ids[-1]
+        assert result["next_start_id"] == config_mod.Config.get_last_downloaded_id() + 1
+        assert config_mod.Config.get_last_downloaded_id() >= ids[-1]
         for i in ids:
             assert (config_paths["comic"] / f"{i}.jpg").exists()
             assert (config_paths["comic"] / f"{i}.jpg").stat().st_size > 0
@@ -193,19 +197,31 @@ class TestDownloadWorker:
         # 没有 HTTP 调用
         assert len(mocked_responses.calls) == 0
 
-    def test_skip_already_completed(
+    def test_stale_success_record_does_not_skip_missing_file(
         self, mocked_responses, qtbot, config_paths, download_records_path
     ):
+        # A stale success record must not skip a missing image.
         write_json(download_records_path, {
             "9001": {"status": "success", "downloaded_time": "2026-01-01 00:00:00"}
         })
+        config_mod.Config.set_last_downloaded_id(9000)
+        mocked_responses.add(
+            responses_lib.GET, _url_for(9001), body=_jpg_bytes(), status=200
+        )
+
         worker = DownloadWorker(start_id=9001, count=1, max_workers=1)
-        with qtbot.waitSignal(worker.completed_signal, timeout=10000) as blocker:
+        with qtbot.waitSignal(worker.completed_signal, timeout=15000) as blocker:
             worker.start()
         result = blocker.args[0]
-        assert result["success_count"] == 0
-        assert 9001 in result["skipped"]
-        assert len(mocked_responses.calls) == 0
+
+        assert result["success_count"] == 1
+        assert result["fail_count"] == 0
+        assert 9001 not in result["skipped"]
+        assert len(mocked_responses.calls) == 1
+        assert (config_paths["comic"] / "9001.jpg").exists()
+        assert result["last_contiguous_id"] == 9001
+        assert result["checkpoint_advanced"] is True
+        assert config_mod.Config.get_last_downloaded_id() == 9001
 
     def test_partial_failure_500(
         self, mocked_responses, qtbot, config_paths
@@ -220,6 +236,10 @@ class TestDownloadWorker:
         assert result["success_count"] == 2
         assert result["fail_count"] == 1
         assert 9002 in result["fail_ids"]
+        # 失败但已尝试并记录的 ID 算"已处理"：续传点越过它，不会把序号
+        # 永远卡在一个（可能永久失效的）失败 ID 上。
+        assert result["last_contiguous_id"] == 9003
+        assert result["resume_id"] == 9004
         # 磁盘：9001 / 9003 存在，9002 不存在
         assert (config_paths["comic"] / "9001.jpg").exists()
         assert not (config_paths["comic"] / "9002.jpg").exists()
@@ -230,6 +250,29 @@ class TestDownloadWorker:
         assert records[9002]["status"] == "failed"
         assert "failed_time" in records[9002]
         assert records[9003]["status"] == "success"
+
+    def test_failed_first_id_does_not_pin_resume_to_start(
+        self, mocked_responses, qtbot, config_paths, download_records_path
+    ):
+        """范围最前面的失败不应把续传点钉回起点，全局检查点也应推进。"""
+        config_mod.Config.set_last_downloaded_id(9000)
+        mocked_responses.add(responses_lib.GET, _url_for(9001), body="err", status=500)
+        mocked_responses.add(responses_lib.GET, _url_for(9002), body=_jpg_bytes(), status=200)
+        mocked_responses.add(responses_lib.GET, _url_for(9003), body=_jpg_bytes(), status=200)
+
+        worker = DownloadWorker(start_id=9001, count=3, max_workers=1)
+        with qtbot.waitSignal(worker.completed_signal, timeout=15000) as blocker:
+            worker.start()
+        result = blocker.args[0]
+
+        assert result["fail_ids"] == [9001]
+        assert result["last_contiguous_id"] == 9003
+        assert result["resume_id"] == 9004
+        assert result["checkpoint_advanced"] is True
+        assert config_mod.Config.get_last_downloaded_id() == 9003
+        # 失败项已作为 failed 记录持久化，可手动改回起始ID重试
+        records = DownloadRecord.load_records()
+        assert records[9001]["status"] == "failed"
 
     def test_502_then_200_retries(
         self, mocked_responses, qtbot, config_paths, monkeypatch
@@ -247,6 +290,24 @@ class TestDownloadWorker:
         assert len(mocked_responses.calls) == 2
         assert (config_paths["comic"] / "9001.jpg").exists()
 
+    def test_invalid_json_body_does_not_use_proxy_retry(
+        self, mocked_responses, qtbot, monkeypatch
+    ):
+        monkeypatch.setattr(config_mod.Config, "PROXY_RETRY_TIMES", 5)
+        mocked_responses.add(
+            responses_lib.GET,
+            _url_for(9313),
+            body="{}",
+            status=200,
+            headers={"Content-Type": "application/json"},
+        )
+        worker = DownloadWorker(start_id=9313, count=1, max_workers=1)
+        with qtbot.waitSignal(worker.completed_signal, timeout=15000) as blocker:
+            worker.start()
+        result = blocker.args[0]
+        assert result["fail_ids"] == [9313]
+        assert len(mocked_responses.calls) == 1
+
     def test_retries_exhausted_502(
         self, mocked_responses, qtbot, config_paths, monkeypatch
     ):
@@ -262,6 +323,27 @@ class TestDownloadWorker:
         assert 9001 in result["fail_ids"]
         assert len(mocked_responses.calls) == 2
 
+    def test_manual_range_does_not_skip_global_gap(
+        self, mocked_responses, qtbot, config_paths
+    ):
+        """A manual range after the checkpoint must not move the global cursor."""
+        config_mod.Config.set_last_downloaded_id(100)
+        for img_id in (200, 201):
+            mocked_responses.add(
+                responses_lib.GET, _url_for(img_id), body=_jpg_bytes(), status=200
+            )
+
+        worker = DownloadWorker(start_id=200, count=2, max_workers=1)
+        with qtbot.waitSignal(worker.completed_signal, timeout=15000) as blocker:
+            worker.start()
+        result = blocker.args[0]
+
+        assert result["last_contiguous_id"] == 201
+        assert result["checkpoint_advanced"] is False
+        assert result["last_downloaded_id"] == 100
+        assert result["next_start_id"] == 101
+        assert config_mod.Config.get_last_downloaded_id() == 100
+
     def test_all_skipped_emits_completed(
         self, mocked_responses, qtbot, download_records_path
     ):
@@ -269,6 +351,9 @@ class TestDownloadWorker:
             str(i): {"status": "success", "downloaded_time": "2026-01-01"}
             for i in range(9001, 9006)
         })
+        for i in range(9001, 9006):
+            (config_mod.Config.COMIC_DIR / f"{i}.jpg").write_bytes(_jpg_bytes())
+        config_mod.Config.set_last_downloaded_id(9000)
         worker = DownloadWorker(start_id=9001, count=5, max_workers=1)
         with qtbot.waitSignal(worker.completed_signal, timeout=10000) as blocker:
             worker.start()
@@ -277,6 +362,9 @@ class TestDownloadWorker:
         assert result["fail_count"] == 0
         assert result["total"] == 5
         assert len(result["skipped"]) == 5
+        assert result["last_contiguous_id"] == 9005
+        assert result["next_start_id"] == 9006
+        assert config_mod.Config.get_last_downloaded_id() == 9005
 
     def test_progress_signal_emitted(
         self, mocked_responses, qtbot, config_paths
@@ -320,5 +408,7 @@ class TestDownloadWorker:
             worker.cancel_download()
         result = blocker.args[0]
         assert result["cancelled"] is True
-        # 取消时请求未完成，success_count 应当为 0
+        # A cancelled in-flight task is neither success nor failure.
         assert result["success_count"] == 0
+        assert result["fail_count"] == 0
+        assert result["cancelled_ids"] == [9001]

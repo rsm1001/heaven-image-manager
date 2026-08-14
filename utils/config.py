@@ -277,5 +277,41 @@ class Config:
             return cls._atomic_write_json(cls.CONFIG_FILE, data)
 
 
+    @classmethod
+    def advance_last_downloaded_id(cls, value: int):
+        """Advance the download checkpoint without allowing it to move backward.
+
+        The read/compare/write sequence shares one lock so concurrent settings
+        updates cannot overwrite the persisted checkpoint. A basic tuple keeps
+        the public return value compatible with Python 3.8.
+
+        An unparsable persisted value is treated like the default (matching
+        get_last_downloaded_id) and repaired by the write, so a corrupt
+        checkpoint field cannot make every save fail forever.
+        """
+        with cls._lock:
+            data = cls._read_config_dict()
+            current_value = data.get(
+                "last_downloaded_id", cls.DEFAULT_LAST_DOWNLOADED_ID
+            )
+            try:
+                current_id = int(current_value)
+            except (TypeError, ValueError):
+                current_id = cls.DEFAULT_LAST_DOWNLOADED_ID
+            try:
+                requested_id = int(value)
+            except (TypeError, ValueError):
+                return False, current_id
+
+            final_id = max(current_id, requested_id)
+            if final_id == current_id and current_id == current_value:
+                return True, current_id
+
+            data["last_downloaded_id"] = final_id
+            if cls._atomic_write_json(cls.CONFIG_FILE, data):
+                return True, final_id
+            return False, current_id
+
+
 # 确保目录存在
 Config.ensure_directories()

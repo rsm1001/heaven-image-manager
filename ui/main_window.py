@@ -439,9 +439,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """关闭事件处理"""
-        # 停止所有后台任务
-        self.download_widget.stop_all_downloads()
-
         # 获取二次确认设置
         confirmation_needed = self.get_confirmation_setting()
 
@@ -453,11 +450,14 @@ class MainWindow(QMainWindow):
                 QMessageBox.No
             )
             if reply == QMessageBox.Yes:
+                # 确认退出后才停止下载并 join 线程；用户选"否"时下载不受影响
+                self.download_widget.shutdown_downloads()
                 logger.info("Application closed by user")
                 event.accept()
             else:
                 event.ignore()
         else:
             # 如果关闭了二次确认,则直接关闭
+            self.download_widget.shutdown_downloads()
             logger.info("Application closed by user")
             event.accept()

@@ -58,6 +58,12 @@ class TestSetLastDownloadedId:
         Config.set_last_downloaded_id(42)
         assert Config.get_last_downloaded_id() == 42
 
+    def test_advance_is_monotonic(self):
+        Config.set_last_downloaded_id(100)
+        assert Config.advance_last_downloaded_id(120) == (True, 120)
+        assert Config.advance_last_downloaded_id(110) == (True, 120)
+        assert Config.get_last_downloaded_id() == 120
+
 
 # ---------------- 路径 / 常量 sanity ----------------
 

@@ -65,7 +65,28 @@ class ThumbnailDownloader:
         return True
 
     def cancel_download(self):
-        """取消当前下载任务（如有）。"""
-        if self.worker and self.worker.is_running:
+        """取消当前下载任务（如有）。
+
+        不做 is_running 判断：worker.start() 之后、run() 真正执行之前存在
+        窗口期，此时取消也必须生效（置标志对未启动的 worker 无副作用）。
+        """
+        if self.worker:
             self.worker.cancel_download()
             logger.info("Cancelled download")
+
+    def shutdown(self, timeout_ms: int = 15000) -> None:
+        """应用退出前调用：取消并等待 worker 线程结束。
+
+        没有这次 join，Qt 会在线程仍运行时销毁 QThread（"QThread:
+        Destroyed while thread is still running"），可能打断
+        download_records.json / config.json 的写入。取消后任务最坏在
+        HTTP 读超时（20s）内返回，这里给 15s 上限并在超时后记录警告。
+        """
+        if self.worker is None:
+            return
+        self.worker.cancel_download()
+        if not self.worker.wait(timeout_ms):
+            logger.warning(
+                f"Download worker did not finish within {timeout_ms}ms "
+                f"during shutdown"
+            )

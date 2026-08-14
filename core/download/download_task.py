@@ -33,20 +33,59 @@ class DownloadTask:
         self.http_client = http_client
         self._is_cancelled = is_cancelled
         self._status = status_emitter or (lambda _msg: None)
+        self._cancelled = False
+        self._stop_proxy_retry = False
+
+    @property
+    def was_cancelled(self) -> bool:
+        """Return whether this task stopped because the worker was cancelled."""
+        return self._cancelled
+
+    def _check_cancelled(self) -> bool:
+        """Record cancellation once and return the current state."""
+        if self._is_cancelled():
+            self._cancelled = True
+            return True
+        return False
+
+    def _interruptible_sleep(self, seconds: float,
+                             should_stop: Callable[[], bool]) -> bool:
+        """Sleep in short slices; return False if should_stop() fired first."""
+        deadline = time.monotonic() + max(0.0, seconds)
+        while True:
+            if should_stop():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(0.25, remaining))
+
+    def _sleep_with_cancel(self, seconds: float) -> bool:
+        """Sleep in short slices so cancellation is observed promptly."""
+        return self._interruptible_sleep(seconds, self._check_cancelled)
+
+    def _rate_limit_delay(self, seconds: float) -> None:
+        """Post-success politeness delay: cut short on cancellation without
+        marking the (already successful) task as cancelled."""
+        self._interruptible_sleep(seconds, self._is_cancelled)
 
     def run_with_proxy_retry(self) -> bool:
-        """按代理重试次数循环执行单次下载；任一次成功即返回 True。"""
+        """Run ordinary retries, then proxy retries for retryable failures."""
         for proxy_retry in range(Config.PROXY_RETRY_TIMES):
-            if self._is_cancelled():
+            if self._check_cancelled():
                 return False
             if self._attempt_once():
                 logger.info(f"Successfully downloaded image {self.img_id}")
                 return True
-            if not self._is_cancelled() and proxy_retry < Config.PROXY_RETRY_TIMES - 1:
+            if self._cancelled or self._stop_proxy_retry:
+                break
+            if proxy_retry < Config.PROXY_RETRY_TIMES - 1:
                 self._status(
-                    f"[{self.img_id}] 代理重试 {proxy_retry + 1}/{Config.PROXY_RETRY_TIMES}..."
+                    f"[{self.img_id}] proxy retry "
+                    f"{proxy_retry + 1}/{Config.PROXY_RETRY_TIMES}..."
                 )
-                time.sleep(Config.PROXY_RETRY_DELAY)
+                if not self._sleep_with_cancel(Config.PROXY_RETRY_DELAY):
+                    return False
 
         logger.warning(f"Failed to download image {self.img_id}")
         return False
@@ -56,7 +95,7 @@ class DownloadTask:
     # ------------------------------------------------------------------
     def _attempt_once(self) -> bool:
         """单次下载尝试：先写 .part，校验通过后原子替换到 .jpg。"""
-        if self._is_cancelled():
+        if self._check_cancelled():
             return False
 
         save_path = Config.COMIC_DIR / f"{self.img_id}.jpg"
@@ -64,7 +103,7 @@ class DownloadTask:
         min_size = getattr(Config, "MIN_VALID_DOWNLOAD_BYTES", 1024)
 
         for retry in range(Config.RETRY_TIMES):
-            if self._is_cancelled():
+            if self._check_cancelled():
                 return False
 
             # 每次重试前先清掉旧 .part 残留
@@ -78,31 +117,69 @@ class DownloadTask:
 
                 with open(tmp_path, "wb") as f:
                     for chunk in response.iter_content(chunk_size=1024):
-                        if self._is_cancelled():
+                        if self._check_cancelled():
                             return False
                         if chunk:
                             f.write(chunk)
 
-                # 完整性校验：大小 + 头部魔数
+                # HTTP 200 may still return an empty response, an HTML/JSON
+                # error page, or a body cut short by the connection dropping.
                 if not looks_like_image(tmp_path, min_size):
+                    content_type = ""
+                    declared_length = None
+                    if response is not None:
+                        content_type = str(
+                            response.headers.get("Content-Type", "")
+                        ).lower()
+                        declared_length = response.headers.get("Content-Length")
+                    try:
+                        actual_size = (
+                            tmp_path.stat().st_size if tmp_path.exists() else 0
+                        )
+                    except OSError:
+                        actual_size = 0
+
+                    # 只有"完整收到的确定性坏响应"（HTML/JSON 错误页、与声明
+                    # 长度一致的非图片体）才放弃代理重试；未收满声明长度属于
+                    # 瞬时网络截断，代理重试仍有机会恢复。
+                    truncated = False
+                    if declared_length is not None:
+                        try:
+                            truncated = actual_size < int(declared_length)
+                        except (TypeError, ValueError):
+                            pass
+                    deterministic_bad_body = not truncated and (
+                        declared_length is not None
+                        or any(
+                            marker in content_type
+                            for marker in ("text/", "html", "json")
+                        )
+                    )
+                    if deterministic_bad_body:
+                        self._stop_proxy_retry = True
                     logger.warning(
                         f"Downloaded file failed integrity check for {self.img_id}; "
+                        f"content_type={content_type or 'unknown'}, "
+                        f"size={actual_size}, "
+                        f"declared_length={declared_length or 'unknown'}, "
                         f"treating as failure"
                     )
                     safe_unlink(tmp_path)
-                    if not self._is_cancelled() and retry < Config.RETRY_TIMES - 1:
-                        time.sleep(Config.RETRY_DELAY)
+                    if not self._check_cancelled() and retry < Config.RETRY_TIMES - 1:
+                        if not self._sleep_with_cancel(Config.RETRY_DELAY):
+                            return False
                         continue
                     return False
 
-                # 落盘前先确保没有同名目标
                 if save_path.exists():
                     safe_unlink(save_path)
 
                 # 原子替换
                 if not atomic_replace(tmp_path, save_path):
                     return False
-                time.sleep(Config.REQUEST_DELAY)
+                # The file is fully persisted; the politeness delay below must
+                # not flip this task into the cancelled bucket.
+                self._rate_limit_delay(Config.REQUEST_DELAY)
                 return True
 
             except requests_exceptions.HTTPError as e:
@@ -112,8 +189,9 @@ class DownloadTask:
                 )
                 safe_unlink(tmp_path)
                 if status_code in [502, 503, 504]:
-                    if not self._is_cancelled() and retry < Config.RETRY_TIMES - 1:
-                        time.sleep(Config.RETRY_DELAY)
+                    if not self._check_cancelled() and retry < Config.RETRY_TIMES - 1:
+                        if not self._sleep_with_cancel(Config.RETRY_DELAY):
+                            return False
                         continue
                 break
             except requests_exceptions.RequestException as e:
@@ -121,8 +199,9 @@ class DownloadTask:
                     f"[task_id={self.img_id}] request error: {e}"
                 )
                 safe_unlink(tmp_path)
-                if not self._is_cancelled() and retry < Config.RETRY_TIMES - 1:
-                    time.sleep(Config.RETRY_DELAY)
+                if not self._check_cancelled() and retry < Config.RETRY_TIMES - 1:
+                    if not self._sleep_with_cancel(Config.RETRY_DELAY):
+                        return False
                     continue
                 break
             except Exception as e:

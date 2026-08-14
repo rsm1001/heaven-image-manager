@@ -154,111 +154,102 @@ class DownloadWidget(QWidget):
     
     @pyqtSlot(dict)
     def on_download_completed(self, result):
-        """下载完成回调"""
+        """Use the worker's persisted checkpoint to refresh the UI."""
         self.log_status("=" * 50)
-        if result.get("success"):
-            success_count = result.get("success_count", 0)
-            fail_count = result.get("fail_count", 0)
-            total = result.get("total", 0)
-            
-            self.log_status(f"下载完成！总计{total}张，成功{success_count}张，失败{fail_count}张")
-            
-            if success_count > 0:
-                # 根据结果中的成功ID来更新最后下载的ID
-                fail_ids = result.get("fail_ids", [])
-                
-                # 确定最后成功下载的ID
-                start_id = self.current_start_id  # 使用实际开始下载的ID
-                # 计算最后成功的ID - 从start_id到start_id+total-1中，找出最高的成功ID
-                # 由于我们不知道具体哪些ID成功了（除非从结果中获取），我们保守地使用成功数量
-                # 假设下载是连续的，那么最后成功下载的ID = start_id + 总数 - 1
-                # 但这个计算可能不准确，如果我们知道确切的成功ID，我们应该使用最大的那个
+        success_count = result.get("success_count", 0)
+        fail_count = result.get("fail_count", 0)
+        total = result.get("total", 0)
 
-                # 计算最后成功的ID
-                last_successful_id = None
-                if result.get("success_ids"):  # 如果下载器提供成功ID列表
-                    success_ids = result.get("success_ids", [])
-                    if success_ids:
-                        last_successful_id = max(success_ids)
-                else:
-                    # 如果没有明确的成功ID列表，我们需要保守处理
-                    # 仅当没有任何失败ID在最后部分时，我们才能安全地使用计算值
-                    expected_last = start_id + total - 1  # 注意：这里用total而不是success_count
-                    if fail_ids:
-                        # 如果有失败的ID，找出最高的成功ID
-                        all_attempted = set(range(start_id, start_id + total))
-                        failed_set = set(fail_ids)
-                        success_set = all_attempted - failed_set
-                        if success_set:
-                            last_successful_id = max(success_set)
-                    else:
-                        # 没有失败的ID，可以直接计算
-                        last_successful_id = expected_last
-                
-                # 如果我们有确切的最后成功ID
-                if last_successful_id is not None:
-                    # 更新配置文件中的最后下载ID
-                    Config.set_last_downloaded_id(last_successful_id)
-
-                    # 更新界面上的起始ID为下一个待下载的ID
-                    self.start_id_spin.setValue(last_successful_id + 1)
-
-                    self.log_status(f"下次下载将从ID {last_successful_id + 1} 开始")
-            
-            fail_ids = result.get("fail_ids", [])
-            if fail_ids:
-                self.log_status(f"失败ID: {fail_ids}")
+        if result.get("cancelled"):
+            self.log_status("下载被用户取消")
+        elif result.get("success"):
+            self.log_status(
+                f"下载完成！总计{total}张，"
+                f"成功{success_count}张，失败{fail_count}张"
+            )
         else:
-            if result.get("cancelled"):
-                # 下载被取消，但可能已经有一些成功下载
-                # 检查是否有任何成功下载的文件
-                success_count = result.get("success_count", 0)
-                if success_count > 0 and self.current_start_id is not None:
-                    # 优先使用 success_ids 精确计算最后成功下载的 ID
-                    success_ids = result.get("success_ids", [])
-                    if success_ids:
-                        last_downloaded_id = max(success_ids)
-                    else:
-                        # fallback：使用估算（向后兼容）
-                        last_downloaded_id = self.current_start_id + self.downloaded_count - 1
+            self.log_status("下载过程中出现错误")
 
-                    # 更新配置文件中的最后下载ID
-                    Config.set_last_downloaded_id(last_downloaded_id)
+        fail_ids = result.get("fail_ids", [])
+        if fail_ids:
+            self.log_status(
+                f"失败ID: {fail_ids}"
+                "（续传点已越过失败项，可手动改回起始ID重试）"
+            )
 
-                    # 更新界面上的起始ID为下一个待下载的ID
-                    self.start_id_spin.setValue(last_downloaded_id + 1)
+        if result.get("checkpoint_saved"):
+            next_start_id = result.get("next_start_id")
+            resume_id = result.get("resume_id")
+            # 微调框跟随本次请求的续传点，不改写用户手动选择的范围；
+            # 全局续传点只作提示，避免把起始ID悄悄拖回检查点缺口。
+            if resume_id is not None:
+                self.start_id_spin.setValue(resume_id)
+                if next_start_id is not None and next_start_id != resume_id:
+                    self.log_status(
+                        f"下次下载将从ID {resume_id} 继续；"
+                        f"全局续传点为 {next_start_id}"
+                    )
+                else:
+                    self.log_status(
+                        f"下次下载将从ID {resume_id} 开始"
+                    )
+            elif next_start_id is not None:
+                self.start_id_spin.setValue(next_start_id)
+                self.log_status(
+                    f"下次下载将从ID {next_start_id} 开始"
+                )
+        else:
+            self.log_status(
+                "下载检查点保存失败，"
+                "请勿关闭程序并检查配置文件写入权限"
+            )
+            logger.error("Download checkpoint was not persisted")
 
-                    self.log_status(f"下载被取消，最后下载ID: {last_downloaded_id}, 下次将从ID {last_downloaded_id + 1} 开始")
-
-                self.log_status("下载被用户取消")
-            else:
-                self.log_status("下载过程中出现错误")
+        if result.get("records_saved") is False:
+            self.log_status(
+                "下载记录保存失败，"
+                "但图片文件已保留"
+            )
+            logger.error("Download records were not persisted")
 
         self.reset_buttons()
 
-        # 发送系统通知（跨平台：win10toast → QSystemTrayIcon → log）
-        total_success = result.get("success_count", 0)
-        total_fail = result.get("fail_count", 0)
+        # Notify through win10toast, QSystemTrayIcon, or logging fallback.
         partial_cleaned = result.get("partial_files_cleaned", 0)
-        if total_success > 0:
+        if success_count > 0:
             notifier.notify(
                 "下载完成",
-                f"成功 {total_success} 张，失败 {total_fail} 张",
+                f"成功 {success_count} 张，"
+                f"失败 {fail_count} 张",
                 duration=5,
             )
         if partial_cleaned:
-            self.log_status(f"已清理 {partial_cleaned} 个上次未完成的临时文件")
-    
+            self.log_status(
+                f"已清理 {partial_cleaned} "
+                "个上次未完成的临时文件"
+            )
+
     @pyqtSlot(str)
     def on_status_update(self, status):
         """状态更新回调"""
         self.log_status(status)
     
+    def _download_running(self) -> bool:
+        """当前是否有下载 worker 在运行（或已 start() 但尚未进入 run()）。"""
+        worker = self.downloader.worker
+        return bool(worker and (worker.isRunning() or worker.is_running))
+
     def stop_download(self):
-        """停止下载"""
+        """Stop downloading and wait for the worker completion callback before re-enabling controls."""
+        # 先置取消标志：即使 worker 刚 start() 还没进入 run()，取消也不能丢
         self.downloader.cancel_download()
-        self.log_status("正在取消下载...")
-        self.reset_buttons()
+        if not self._download_running():
+            # 线程已结束（或从未启动），completed_signal 不会来，直接复位。
+            self.reset_buttons()
+            return
+        self.log_status("Cancelling download...")
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
     
     def reset_buttons(self):
         """重置按钮状态"""
@@ -279,9 +270,21 @@ class DownloadWidget(QWidget):
         logger.info("DownloadWidget refreshed")
     
     def stop_all_downloads(self):
-        """停止所有下载"""
+        """Stop all downloads and let the completion callback restore the UI."""
         self.downloader.cancel_download()
-        self.reset_buttons()
+        if not self._download_running():
+            # 没有下载在跑：不要禁用按钮，否则没有信号来恢复它们。
+            return
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+
+    def shutdown_downloads(self):
+        """应用退出前调用：取消并阻塞等待下载线程退出。
+
+        与 stop_all_downloads 不同，这里必须 join——窗口销毁后 QThread
+        若仍在运行会直接 abort 进程，可能打断记录/检查点写入。
+        """
+        self.downloader.shutdown()
     
     def pause_download(self):
         """暂停下载 - 已移除此功能"""
