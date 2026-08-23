@@ -69,7 +69,7 @@ class PreviewWidget(QWidget):
 
         self.grid_button = QPushButton("缩略图浏览")
         self.grid_button.setCheckable(True)
-        self.grid_button.setToolTip("切换到缩略图网格；单击缩略图进入单图预览")
+        self.grid_button.setToolTip("\u5207\u6362\u5230\u7f29\u7565\u56fe\u7f51\u683c\uff1b\u62d6\u52a8\u9f20\u6807\u6846\u9009\u591a\u5f20\u56fe\u7247\uff0c\u53cc\u51fb\u7f29\u7565\u56fe\u8fdb\u5165\u5355\u56fe\u9884\u89c8")
         self.grid_button.toggled.connect(self.toggle_view_mode)
 
         self.fullscreen_button = QPushButton("全屏")
@@ -86,6 +86,35 @@ class PreviewWidget(QWidget):
         control_layout.addStretch()
         
         layout.addLayout(control_layout)
+
+        # 缩略图批量操作栏：支持框选、Ctrl 多选以及全选。
+        selection_layout = QHBoxLayout()
+        selection_layout.setSpacing(6)
+        selection_layout.setContentsMargins(6, 4, 6, 4)
+        self.selection_info_label = QLabel("\u5df2\u9009\u62e9 0 \u5f20")
+        self.selection_info_label.setObjectName("previewSelectionLabel")
+        self.select_all_button = QPushButton("\u5168\u9009")
+        self.select_all_button.clicked.connect(self.select_all_images)
+        self.clear_selection_button = QPushButton("\u53d6\u6d88\u9009\u62e9")
+        self.clear_selection_button.clicked.connect(self.clear_selected_images)
+        self.batch_move_button = QPushButton("\u6279\u91cf\u79fb\u52a8\u5230 01")
+        self.batch_move_button.clicked.connect(self.move_selected_images)
+        self.batch_delete_button = QPushButton("\u6279\u91cf\u5220\u9664")
+        self.batch_delete_button.clicked.connect(self.delete_selected_images)
+        for button in (
+            self.select_all_button,
+            self.clear_selection_button,
+            self.batch_move_button,
+            self.batch_delete_button,
+        ):
+            button.setAutoDefault(False)
+        selection_layout.addWidget(self.selection_info_label)
+        selection_layout.addStretch()
+        selection_layout.addWidget(self.select_all_button)
+        selection_layout.addWidget(self.clear_selection_button)
+        selection_layout.addWidget(self.batch_move_button)
+        selection_layout.addWidget(self.batch_delete_button)
+        layout.addLayout(selection_layout)
         
         # 图片显示区域
         self.scroll_area = QScrollArea()
@@ -106,6 +135,7 @@ class PreviewWidget(QWidget):
         self.thumbnail_grid = ThumbnailGridWidget(self)
         self.thumbnail_grid.image_activated.connect(self.open_image_from_thumbnail)
         self.thumbnail_grid.selection_changed.connect(self.on_thumbnail_selection_changed)
+        self.thumbnail_grid.selection_count_changed.connect(self.on_thumbnail_count_changed)
         self.preview_stack.addWidget(self.thumbnail_grid)
 
         # 添加到布局
@@ -461,6 +491,138 @@ class PreviewWidget(QWidget):
 
             self.show_next_image()
     
+    def on_thumbnail_count_changed(self, count: int):
+        """Update the batch-operation selection counter."""
+        self.selection_info_label.setText(f"\u5df2\u9009\u62e9 {count} \u5f20")
+        self.update_controls()
+
+    def select_all_images(self):
+        if self.thumbnail_grid:
+            self.thumbnail_grid.select_all()
+
+    def clear_selected_images(self):
+        if self.thumbnail_grid:
+            self.thumbnail_grid.clear_selection()
+        self.update_controls()
+
+    def _get_main_window(self):
+        parent = self
+        while parent:
+            if type(parent).__name__ == "MainWindow":
+                return parent
+            parent = parent.parent()
+        return None
+
+    def _show_batch_result(self, title: str, message: str):
+        main_window = self._get_main_window()
+        if not main_window or not hasattr(main_window, "get_confirmation_setting") or main_window.get_confirmation_setting():
+            QMessageBox.information(self, title, message)
+        self.info_label.setText(message)
+
+    def _remove_processed_images(self, processed_paths):
+        """Remove processed files while keeping the current index stable."""
+        if not processed_paths:
+            return
+        processed = {Path(path) for path in processed_paths}
+        current_path = (
+            self.image_files[self.current_index]
+            if 0 <= self.current_index < len(self.image_files)
+            else None
+        )
+        old_index = self.current_index
+        self.image_files = [path for path in self.image_files if path not in processed]
+        if not self.image_files:
+            self.current_index = -1
+        elif current_path in self.image_files:
+            self.current_index = self.image_files.index(current_path)
+        else:
+            self.current_index = min(max(0, old_index), len(self.image_files) - 1)
+
+    def delete_selected_images(self):
+        """Move selected images to the recycle bin."""
+        paths = self.thumbnail_grid.selected_paths() if self.thumbnail_grid else []
+        if not paths:
+            return
+
+        main_window = self._get_main_window()
+        confirmation_needed = (
+            main_window.get_confirmation_setting()
+            if main_window and hasattr(main_window, "get_confirmation_setting")
+            else True
+        )
+        if confirmation_needed:
+            reply = QMessageBox.question(
+                self,
+                "\u786e\u8ba4\u6279\u91cf\u5220\u9664",
+                f"\u786e\u5b9a\u8981\u5220\u9664\u9009\u4e2d\u7684 {len(paths)} \u5f20\u56fe\u7247\u5417\uff1f\u56fe\u7247\u4f1a\u79fb\u5165\u56de\u6536\u7ad9\u3002",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        success_paths = []
+        failures = []
+        for image_path in paths:
+            success, message = FileManager.delete_image(image_path)
+            if success:
+                success_paths.append(image_path)
+            else:
+                failures.append(f"{image_path.name}: {message}")
+
+        self._remove_processed_images(success_paths)
+        self.sync_thumbnail_grid(force=True)
+        if self.thumbnail_grid:
+            self.thumbnail_grid.clear_selection()
+        self.update_counter()
+        self.update_controls()
+        if self.image_files and not self._is_grid_view_active():
+            self.show_current_image()
+        elif not self.image_files:
+            self.image_label.clear()
+            self.info_label.setText("\u6ca1\u6709\u56fe\u7247")
+            self.update_counter()
+            self.update_controls()
+        summary = f"\u5df2\u5220\u9664 {len(success_paths)} \u5f20\u56fe\u7247"
+        if failures:
+            summary += f"\uff0c\u5931\u8d25 {len(failures)} \u5f20"
+        self._show_batch_result("\u6279\u91cf\u5220\u9664\u7ed3\u679c", summary)
+        if main_window and success_paths and hasattr(main_window, "update_undo_button_state"):
+            main_window.update_undo_button_state()
+
+    def move_selected_images(self):
+        """Move selected images to the configured 01 directory."""
+        paths = self.thumbnail_grid.selected_paths() if self.thumbnail_grid else []
+        if not paths:
+            return
+
+        success_paths = []
+        failures = []
+        for image_path in paths:
+            success, message, _target_path = FileManager.move_image(image_path)
+            if success:
+                success_paths.append(image_path)
+            else:
+                failures.append(f"{image_path.name}: {message}")
+
+        self._remove_processed_images(success_paths)
+        self.sync_thumbnail_grid(force=True)
+        if self.thumbnail_grid:
+            self.thumbnail_grid.clear_selection()
+        self.update_counter()
+        self.update_controls()
+        if self.image_files and not self._is_grid_view_active():
+            self.show_current_image()
+        elif not self.image_files:
+            self.image_label.clear()
+        summary = f"\u5df2\u79fb\u52a8 {len(success_paths)} \u5f20\u56fe\u7247\u5230 01 \u76ee\u5f55"
+        if failures:
+            summary += f"\uff0c\u5931\u8d25 {len(failures)} \u5f20"
+        self._show_batch_result("\u6279\u91cf\u79fb\u52a8\u7ed3\u679c", summary)
+        main_window = self._get_main_window()
+        if main_window and success_paths and hasattr(main_window, "update_undo_button_state"):
+            main_window.update_undo_button_state()
+
     def on_thumbnail_selection_changed(self, index: int):
         """同步键盘或鼠标改变的网格当前项，但不切换到单图视图。"""
         if 0 <= index < len(self.image_files):
@@ -491,7 +653,7 @@ class PreviewWidget(QWidget):
             self.sync_thumbnail_grid(force=True)
             self.thumbnail_grid.set_current_index(self.current_index)
             self.grid_button.setText("单图预览")
-            self.info_label.setText("缩略图浏览：单击缩略图进入单图预览")
+            self.info_label.setText("\u7f29\u7565\u56fe\u6d4f\u89c8\uff1a\u62d6\u52a8\u9f20\u6807\u6846\u9009\u591a\u5f20\u56fe\u7247\uff0c\u53cc\u51fb\u7f29\u7565\u56fe\u8fdb\u5165\u5355\u56fe\u9884\u89c8")
         else:
             self.preview_stack.setCurrentWidget(self.scroll_area)
             self.grid_button.setText("缩略图浏览")
@@ -542,6 +704,13 @@ class PreviewWidget(QWidget):
         self.random_button.setEnabled(has_images)
         self.grid_button.setEnabled(has_images)
         self.fullscreen_button.setEnabled(has_valid_index)
+
+        selected_count = self.thumbnail_grid.selected_count() if self.thumbnail_grid else 0
+        self.selection_info_label.setText(f"\u5df2\u9009\u62e9 {selected_count} \u5f20")
+        self.select_all_button.setEnabled(has_images)
+        self.clear_selection_button.setEnabled(selected_count > 0)
+        self.batch_move_button.setEnabled(selected_count > 0)
+        self.batch_delete_button.setEnabled(selected_count > 0)
 
         if not has_images and self.grid_button.isChecked():
             self.grid_button.setChecked(False)
