@@ -2,12 +2,14 @@
 from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from PIL import Image, ImageOps
 from PyQt5.QtCore import (
     QEvent,
     QModelIndex,
+    QRect,
+    QItemSelection,
     QItemSelectionModel,
     QObject,
     QPoint,
@@ -20,7 +22,14 @@ from PyQt5.QtCore import (
     pyqtSlot,
 )
 from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap
-from PyQt5.QtWidgets import QAbstractItemView, QListView, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QListView,
+    QVBoxLayout,
+    QWidget,
+    QRubberBand,
+)
 from PyQt5.QtGui import QStandardItem, QStandardItemModel
 
 from utils.logger import logger
@@ -92,6 +101,77 @@ class ThumbnailLoadTask(QRunnable):
             self.signals.failed.emit(self.cache_key, self.generation, str(exc))
 
 
+class RubberBandListView(QListView):
+    """QListView with predictable rectangle selection in IconMode."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._selection_origin = None
+        self._selection_dragging = False
+        self._selection_modifiers = Qt.NoModifier
+        self._rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+        self._rubber_band.hide()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.selectionMode() != QAbstractItemView.SingleSelection:
+            self._selection_origin = event.pos()
+            self._selection_dragging = False
+            self._selection_modifiers = event.modifiers()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._selection_origin is not None and event.buttons() & Qt.LeftButton:
+            if not self._selection_dragging:
+                distance = (event.pos() - self._selection_origin).manhattanLength()
+                if distance >= QApplication.startDragDistance():
+                    self._selection_dragging = True
+                    self._rubber_band.setGeometry(self._selection_rect(event.pos()))
+                    self._rubber_band.show()
+            if self._selection_dragging:
+                self._rubber_band.setGeometry(self._selection_rect(event.pos()))
+                self._select_in_rect(self._rubber_band.geometry(), self._selection_modifiers)
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        was_dragging = self._selection_dragging
+        if was_dragging:
+            self._rubber_band.hide()
+        self._selection_origin = None
+        self._selection_dragging = False
+        if was_dragging:
+            # Do not let QListView's normal release handling collapse the box selection.
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _selection_rect(self, position: QPoint):
+        return self._normalized_rect(self._selection_origin, position)
+
+    @staticmethod
+    def _normalized_rect(first: QPoint, second: QPoint):
+        return QRect(first, second).normalized()
+
+    def _select_in_rect(self, rect, modifiers) -> None:
+        selection = QItemSelection()
+        first_index = QModelIndex()
+        for row in range(self.model().rowCount()):
+            index = self.model().index(row, 0)
+            if self.visualRect(index).intersects(rect):
+                selection.select(index, index)
+                if not first_index.isValid():
+                    first_index = index
+
+        flags = QItemSelectionModel.Select
+        if not (modifiers & Qt.ControlModifier):
+            flags |= QItemSelectionModel.Clear
+        self.selectionModel().select(selection, flags)
+        if first_index.isValid():
+            self.selectionModel().setCurrentIndex(first_index, QItemSelectionModel.NoUpdate)
+
+
+
 class ThumbnailGridWidget(QWidget):
     """QListView IconMode 缩略图网格，只请求可见区域及少量预读项。"""
 
@@ -101,6 +181,7 @@ class ThumbnailGridWidget(QWidget):
 
     image_activated = pyqtSignal(Path)
     selection_changed = pyqtSignal(int)
+    selection_count_changed = pyqtSignal(int)
 
     def __init__(
         self,
@@ -120,7 +201,7 @@ class ThumbnailGridWidget(QWidget):
         self._thread_pool = QThreadPool(self)
         self._thread_pool.setMaxThreadCount(max(1, min(4, QThreadPool.globalInstance().maxThreadCount())))
 
-        self.view = QListView(self)
+        self.view = RubberBandListView(self)
         self.model = QStandardItemModel(self)
         self.view.setModel(self.model)
         self.view.setViewMode(QListView.IconMode)
@@ -135,7 +216,7 @@ class ThumbnailGridWidget(QWidget):
         self.view.setGridSize(self.grid_size)
         self.view.setWordWrap(False)
         self.view.setTextElideMode(Qt.ElideMiddle)
-        self.view.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.view.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -149,9 +230,11 @@ class ThumbnailGridWidget(QWidget):
 
         self._placeholder_icon = self._create_status_icon("加载中", "#4A4A4A", "#BDBDBD")
         self._error_icon = self._create_status_icon("无法预览", "#5A3030", "#F0B4B4")
-        self.view.clicked.connect(self._activate_index)
+        # A single click only selects; double-click or Enter opens the single-image preview.
+        self.view.doubleClicked.connect(self._activate_index)
         self.view.activated.connect(self._activate_index)
         self.view.selectionModel().currentChanged.connect(self._on_current_changed)
+        self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self.view.verticalScrollBar().valueChanged.connect(self.schedule_visible_load)
         self.view.viewport().installEventFilter(self)
 
@@ -344,6 +427,36 @@ class ThumbnailGridWidget(QWidget):
     def _on_current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         if current.isValid():
             self.selection_changed.emit(current.row())
+
+    @pyqtSlot(QItemSelection, QItemSelection)
+    def _on_selection_changed(self, selected, deselected) -> None:
+        """Notify the preview widget when box or Ctrl multi-selection changes."""
+        self.selection_count_changed.emit(len(self.view.selectionModel().selectedIndexes()))
+
+    def selected_paths(self) -> List[Path]:
+        """Return selected image paths in grid order."""
+        rows = sorted({index.row() for index in self.view.selectionModel().selectedIndexes()})
+        paths = []
+        for row in rows:
+            item = self.model.item(row)
+            if item is not None:
+                value = item.data(self.PATH_ROLE)
+                if value:
+                    paths.append(Path(value))
+        return paths
+
+    def selected_count(self) -> int:
+        return len(self.view.selectionModel().selectedIndexes())
+
+    def clear_selection(self) -> None:
+        self.view.clearSelection()
+        self.view.setCurrentIndex(QModelIndex())
+        self._on_selection_changed(None, None)
+
+    def select_all(self) -> None:
+        if self.model.rowCount():
+            self.view.selectAll()
+            self._on_selection_changed(None, None)
 
     @pyqtSlot(QModelIndex)
     def _activate_index(self, index: QModelIndex) -> None:
