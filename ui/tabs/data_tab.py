@@ -10,7 +10,9 @@ from pathlib import Path
 import sys
 import random
 import logging
+import webbrowser
 from datetime import datetime
+from urllib.parse import quote
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -55,6 +57,10 @@ class DataTabWidget(QWidget):
         self.random_button = QPushButton("随机获取一个项目")
         self.random_button.clicked.connect(self._on_get_random_item)
 
+        self.open_current_button = QPushButton("\u6253\u5f0018comic\u9875\u9762")
+        self.open_current_button.setEnabled(False)
+        self.open_current_button.clicked.connect(self._on_open_current_item)
+
         self.delete_current_button = QPushButton("删除当前显示的项目")
         self.delete_current_button.clicked.connect(self._on_delete_current_item)
 
@@ -62,6 +68,7 @@ class DataTabWidget(QWidget):
         self.clear_display_button.clicked.connect(self._on_clear_display)
 
         random_buttons_layout.addWidget(self.random_button)
+        random_buttons_layout.addWidget(self.open_current_button)
         random_buttons_layout.addWidget(self.delete_current_button)
         random_buttons_layout.addWidget(self.clear_display_button)
         random_buttons_layout.addStretch()
@@ -185,10 +192,12 @@ class DataTabWidget(QWidget):
         if not data:
             self.random_result_text.setPlainText("JSON文件中没有数据")
             self.current_random_item = None
+            self.open_current_button.setEnabled(False)
             logger.warning("JSON文件为空，无法随机选择")
             return
 
         self.current_random_item = random.choice(data)
+        self.open_current_button.setEnabled(bool(self.current_random_item.get("name")))
 
         formatted_lines = []
         for key, value in self.current_random_item.items():
@@ -196,6 +205,26 @@ class DataTabWidget(QWidget):
 
         self.random_result_text.setPlainText("\n".join(formatted_lines))
         logger.info(f"已随机选择项目: {self.current_random_item.get('name', '未知')}")
+
+    def _on_open_current_item(self):
+        """Open the current random item in its 18comic browser page."""
+        if not self.current_random_item:
+            QMessageBox.warning(self, "\u8b66\u544a", "\u8bf7\u5148\u968f\u673a\u83b7\u53d6\u4e00\u4e2a\u9879\u76ee")
+            return
+
+        target_name = self.current_random_item.get("name")
+        if not target_name:
+            QMessageBox.warning(self, "\u8b66\u544a", "\u5f53\u524d\u9879\u76ee\u7f3a\u5c11 name \u5b57\u6bb5\uff0c\u65e0\u6cd5\u6253\u5f00\u9875\u9762")
+            return
+
+        # Encode the name as one URL path segment so special characters remain valid.
+        target_url = f"https://18comic.vip/photo/{quote(str(target_name), safe='')}"
+        if not webbrowser.open(target_url, new=2):
+            QMessageBox.warning(self, "\u8b66\u544a", f"\u65e0\u6cd5\u6253\u5f00\u6d4f\u89c8\u5668\u9875\u9762\uff1a\n{target_url}")
+            logger.warning(f"\u65e0\u6cd5\u6253\u5f00 18comic \u9875\u9762: {target_url}")
+            return
+
+        logger.info(f"\u5df2\u6253\u5f00 18comic \u9875\u9762: {target_url}")
 
     def _on_delete_current_item(self):
         """删除当前项目
@@ -224,6 +253,7 @@ class DataTabWidget(QWidget):
                 f"数据中已不存在 name='{target_name}' 的项目（可能已被其他操作删除）"
             )
             self.current_random_item = None
+            self.open_current_button.setEnabled(False)
             self.random_result_text.setPlainText("项目已不存在")
             return
 
@@ -260,6 +290,7 @@ class DataTabWidget(QWidget):
                     QMessageBox.information(self, "成功", "项目已删除")
 
                 self.current_random_item = None
+                self.open_current_button.setEnabled(False)
                 self.random_result_text.setPlainText("项目已删除")
                 self._on_load_table_data()
                 self.parent_widget.update_stats()
@@ -272,6 +303,7 @@ class DataTabWidget(QWidget):
         """清空显示"""
         self.random_result_text.setPlainText("")
         self.current_random_item = None
+        self.open_current_button.setEnabled(False)
 
     def _on_clear_json_file(self):
         """清空JSON文件"""
@@ -294,6 +326,8 @@ class DataTabWidget(QWidget):
 
         if reply == QMessageBox.Yes:
             if FileManager.save_json_data([]):
+                self.current_random_item = None
+                self.open_current_button.setEnabled(False)
                 if self._show_result_info():
                     QMessageBox.information(self, "成功", "JSON文件已清空")
                 self._on_load_table_data()
